@@ -132,13 +132,14 @@ def _call_t126(client: EFRISClient, query_date_str: str) -> dict:
 
 def _refresh_session(client: EFRISClient):
     """
-    Run T103 (sign-in) + T104 (new AES session key) to renew the session.
-    Mirrors SAP B1's automatic re-login on session expiry.
-    Resets the cached AES key so the next call reads the fresh key from file.
+    Renew the EFRIS session: T102 (fresh private key) → T103 (sign-in) → T104 (new AES key).
+    Running T102 ensures the private key on disk is current before T104 tries to use it.
+    Resets the cached AES key so the next T126 call reads the fresh key from file.
     """
-    from efris_integration.api.auth import sign_in, get_symmetric_key
-    sign_in()
-    get_symmetric_key()
+    from efris_integration.api.auth import client_init, sign_in, get_symmetric_key
+    client_init()       # T102 — fresh private key + server public key
+    sign_in()           # T103 — sign in
+    get_symmetric_key() # T104 — new session AES key
     client._aes_key = None   # force reload from SessionAESKey.txt on next call
 
 

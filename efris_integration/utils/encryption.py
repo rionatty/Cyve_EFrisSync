@@ -78,9 +78,35 @@ def _import_rsa_key(key_data: str):
 
 
 def rsa_decrypt(encrypted_b64: str, private_key_pem: str) -> bytes:
-    key = _import_rsa_key(private_key_pem)
-    cipher = PKCS1_OAEP.new(key)
-    return cipher.decrypt(base64.b64decode(encrypted_b64))
+    """
+    Decrypt RSA ciphertext with the client private key.
+    Tries PKCS1v1.5 first (used by EFRIS Uganda T104), then OAEP as fallback.
+    """
+    from Crypto.Cipher import PKCS1_v1_5
+    key        = _import_rsa_key(private_key_pem)
+    ciphertext = base64.b64decode(encrypted_b64 + "==")
+
+    # 1. PKCS1v1.5 — EFRIS Uganda T104 passowrdDes
+    try:
+        _sentinel = object()
+        result = PKCS1_v1_5.new(key).decrypt(ciphertext, _sentinel)
+        if result is not _sentinel and result:
+            return result
+    except Exception:
+        pass
+
+    # 2. OAEP fallback
+    try:
+        return PKCS1_OAEP.new(key).decrypt(ciphertext)
+    except Exception:
+        pass
+
+    raise ValueError(
+        "RSA decryption failed (tried PKCS1v1.5 and OAEP).<br>"
+        "The T104 session key cannot be decrypted — the private key in "
+        "PrivateKey.txt may not match the current EFRIS server session.<br>"
+        "Run <b>Full Initialise (T101→T104)</b> from EFRIS Settings to regenerate keys."
+    )
 
 
 def rsa_encrypt(data: bytes, public_key_pem: str) -> str:
