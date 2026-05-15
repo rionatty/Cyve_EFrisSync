@@ -56,24 +56,36 @@ def sync_exchange_rates(from_date: str = None, to_date: str = None) -> dict:
 
 
 def _fetch_one_day(client: EFRISClient, query_date: date) -> tuple[int, str]:
-    """Call T126 for one date, parse T120 list, upsert rates."""
+    """Call T126 for one date, parse T120 list, upsert rates.
+    Auto-refreshes the session once if the AES key is stale (code 15/16/99)."""
     query_date_str = query_date.strftime("%Y-%m-%d") + " 00:00:00"
 
     try:
-        result = client.call(
-            "T126",
-            payload={"queryDate": query_date_str},
-            encrypt=True,
-            sign=True,
-            doc_type="Currency Exchange",
-            doc_name="",
-        )
+        result = _call_t126(client, query_date_str)
     except EFRISAPIError as exc:
-        frappe.log_error(
-            f"T126 [{exc.code}] {exc.message} for {query_date_str}",
-            "EFRIS Exchange Rate Error",
-        )
-        frappe.throw(f"❌ T126 failed: [{exc.code}] {exc.message}", title="Exchange Rate Error")
+        # Session-expired codes — refresh T103+T104 and retry once silently
+        if exc.code in ("15", "16", "99", "SESSION_EXPIRED"):
+            frappe.logger("efris").info(
+                f"T126 [{exc.code}] — refreshing session (T103+T104) and retrying."
+            )
+            _refresh_session(client)
+            try:
+                result = _call_t126(client, query_date_str)
+            except EFRISAPIError as exc2:
+                frappe.log_error(
+                    f"T126 [{exc2.code}] {exc2.message} after session refresh",
+                    "EFRIS Exchange Rate Error",
+                )
+                frappe.throw(
+                    f"❌ T126 failed: [{exc2.code}] {exc2.message}",
+                    title="Exchange Rate Error",
+                )
+        else:
+            frappe.log_error(
+                f"T126 [{exc.code}] {exc.message} for {query_date_str}",
+                "EFRIS Exchange Rate Error",
+            )
+            frappe.throw(f"❌ T126 failed: [{exc.code}] {exc.message}", title="Exchange Rate Error")
 
     rate_list = _extract_rate_list(result)
     if not rate_list:
@@ -105,6 +117,30 @@ def _fetch_one_day(client: EFRISClient, query_date: date) -> tuple[int, str]:
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _call_t126(client: EFRISClient, query_date_str: str) -> dict:
+    """POST T126 with AES-encrypted + RSA-signed queryDate payload."""
+    return client.call(
+        "T126",
+        payload={"queryDate": query_date_str},
+        encrypt=True,
+        sign=True,
+        doc_type="Currency Exchange",
+        doc_name="",
+    )
+
+
+def _refresh_session(client: EFRISClient):
+    """
+    Run T103 (sign-in) + T104 (new AES session key) to renew the session.
+    Mirrors SAP B1's automatic re-login on session expiry.
+    Resets the cached AES key so the next call reads the fresh key from file.
+    """
+    from efris_integration.api.auth import sign_in, get_symmetric_key
+    sign_in()
+    get_symmetric_key()
+    client._aes_key = None   # force reload from SessionAESKey.txt on next call
+
 
 def _extract_rate_list(result) -> list:
     if isinstance(result, list):
