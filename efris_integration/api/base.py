@@ -191,8 +191,9 @@ class EFRISClient:
         """
         from efris_integration.api.auth import sign_in, get_symmetric_key
 
-        sign_in()           # T103: sign in / get device info
+        # URA guide order: T104 first (get AES key), then T103 (sign in)
         get_symmetric_key() # T104: RSA-decrypt passowrdDes → session AES key
+        sign_in()           # T103: sign in / get device info
         self._aes_key = None  # force reload from file after T104 writes it
 
     def set_aes_key(self, key_bytes: bytes):

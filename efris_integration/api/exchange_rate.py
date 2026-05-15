@@ -159,8 +159,9 @@ def _refresh_session(client: EFRISClient):
     Resets the cached AES key so the next T126 call reads the fresh key from file.
     """
     from efris_integration.api.auth import sign_in, get_symmetric_key
-    sign_in()           # T103 — sign in
+    # URA guide order: T104 first (get AES key), then T103 (sign in)
     get_symmetric_key() # T104 — new session AES key
+    sign_in()           # T103 — sign in
     client._aes_key = None   # force reload from SessionAESKey.txt on next call
 
 

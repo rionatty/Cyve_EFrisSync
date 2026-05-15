@@ -152,21 +152,28 @@ def get_symmetric_key() -> dict:
     """
     T104 — Get session AES key from EFRIS.
 
-    T104.cs field: passowrdDes (SAP typo — two 'o's)
-    SAP B1: passowrdDes is a plain base64 AES key (EncryptionHelper.cs
-    has no RSA decrypt; private key is signing-only).
-    Private key is attempted as fallback only — T104 works without it.
+    Official URA guide: passowrdDes is RSA-encrypted with the taxpayer's
+    public key. Decrypt with the private key to get the AES session key.
     """
     client = EFRISClient()
 
-    # Private key is optional for T104 — passowrdDes is plain base64 in SAP B1.
-    # Try to read it for RSA fallback, but do not block if it's missing.
     try:
         private_key_pem = client.key_manager.get_private_key()
-    except (RuntimeError, Exception):
+    except (RuntimeError, Exception) as e:
+        frappe.log_error(
+            f"T104: failed to read private key — {e}\n"
+            f"private_key_path = {client.settings.get('private_key_path')}",
+            "EFRIS T104 Private Key Read Error",
+        )
         private_key_pem = ""
 
     result = client.call("T104", encrypt=False)
+
+    # Log the full T104 response so we can debug
+    frappe.logger("efris").info(
+        f"T104 response keys: {list(result.keys())}\n"
+        f"T104 full result: {result}"
+    )
 
     # T104.cs: JsonPropertyName("passowrdDes") — SAP typo, two 'o's
     encrypted_aes_b64 = result.get("passowrdDes", "") or result.get("passwordDes", "")
@@ -178,12 +185,20 @@ def get_symmetric_key() -> dict:
         frappe.throw(
             f"T104 returned no AES key.<br>"
             f"Response keys: <code>{list(result.keys())}</code><br>"
-            "Check <b>Error Log</b> for full T104 response."
+            "Check <b>Error Log → EFRIS T104 Unexpected Response</b>."
         )
+
+    frappe.logger("efris").info(
+        f"T104 passowrdDes length: {len(encrypted_aes_b64)} chars  "
+        f"preview: {encrypted_aes_b64[:40]}"
+    )
 
     aes_key_bytes = _extract_aes_key(encrypted_aes_b64, private_key_pem)
     client.set_aes_key(aes_key_bytes)   # writes to SessionAESKey.txt
 
+    frappe.logger("efris").info(
+        f"T104: AES key saved — {len(aes_key_bytes)} bytes: {aes_key_bytes.hex()}"
+    )
     frappe.msgprint(
         f"✅ T104: Session AES key ({len(aes_key_bytes) * 8}-bit) saved.",
         indicator="green",
@@ -294,6 +309,71 @@ def _extract_aes_key(value: str, private_key_pem: str) -> bytes:
         "See <b>Error Log → EFRIS T104 RSA Decrypt Failed</b> for raw diagnostic bytes.",
         title="T104 RSA Decrypt Failed",
     )
+
+
+# ─── Diagnostic: verify keys and T104 raw values ────────────────────────
+
+@frappe.whitelist()
+def diagnose_keys() -> dict:
+    """
+    Read the key files and T104 raw values to help debug session issues.
+    Accessible from the browser console: frappe.call('efris_integration.api.auth.diagnose_keys')
+    """
+    import base64 as _b64
+    import os
+
+    client   = EFRISClient()
+    settings = client.settings
+    km       = client.key_manager
+
+    report = {}
+
+    # ── Private key ───────────────────────────────────────────────────────
+    priv_path = settings.get("private_key_path") or ""
+    report["private_key_path"] = priv_path
+    report["private_key_exists"] = os.path.isfile(priv_path) if priv_path else False
+    if report["private_key_exists"]:
+        try:
+            pem = km.get_private_key()
+            report["private_key_length"] = len(pem)
+            report["private_key_preview"] = pem[:40]
+            from efris_integration.utils.encryption import _import_rsa_key
+            key = _import_rsa_key(pem)
+            report["private_key_rsa_bits"] = key.n.bit_length()
+        except Exception as e:
+            report["private_key_error"] = str(e)
+
+    # ── Session AES key ───────────────────────────────────────────────────
+    sess_path = settings.get("session_key_path") or ""
+    report["session_key_path"] = sess_path
+    report["session_key_exists"] = os.path.isfile(sess_path) if sess_path else False
+    if report["session_key_exists"]:
+        try:
+            key_bytes = km.get_aes_key()
+            report["session_key_bytes"] = len(key_bytes)
+            report["session_key_hex"] = key_bytes.hex()
+        except Exception as e:
+            report["session_key_error"] = str(e)
+
+    # ── Call T104 and show raw passowrdDes ────────────────────────────────
+    try:
+        result = client.call("T104", encrypt=False)
+        report["t104_keys"] = list(result.keys())
+        pwd = result.get("passowrdDes", "") or result.get("passwordDes", "")
+        report["passowrdDes_length"] = len(pwd)
+        report["passowrdDes_preview"] = pwd[:60]
+        raw = _b64.b64decode(pwd + "==")
+        report["passowrdDes_decoded_bytes"] = len(raw)
+    except Exception as e:
+        report["t104_error"] = str(e)
+
+    frappe.log_error(str(report), "EFRIS Key Diagnostics")
+    frappe.msgprint(
+        f"<pre>{frappe.as_json(report, indent=2)}</pre>",
+        title="EFRIS Key Diagnostics",
+        wide=True,
+    )
+    return report
 
 
 # ─── Full Init Sequence ───────────────────────────────────────────────────
