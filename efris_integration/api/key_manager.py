@@ -45,28 +45,25 @@ class KeyManager:
         """
         Read the session AES key from the file at session_key_path.
         Handles raw binary, hex string, and base64 encodings.
+        Raises RuntimeError (not frappe.throw) if unavailable so the
+        caller (EFRISClient._get_aes_key) can auto-initialise silently.
         """
         path = self.s.get("session_key_path")
         if not path:
-            frappe.throw(
-                "Session Key Path is not configured in EFRIS Settings. "
-                "Set the path to SessionAESKey.txt and run Full Initialise."
+            raise RuntimeError(
+                "Session Key Path is not configured in EFRIS Settings."
             )
         if not os.path.isfile(path):
-            frappe.throw(
-                f"Session key file not found: {path}<br>"
-                "Run <b>Full Initialise (T101→T104)</b> to generate it."
-            )
+            raise RuntimeError(f"Session key file not found: {path}")
 
         raw = _read_bytes(path)
         key = _parse_aes_key(raw)
         if key:
             return key
 
-        frappe.throw(
-            f"Cannot parse AES key from '{path}'.<br>"
-            "Expected 16/24/32 raw bytes, hex string, or base64.<br>"
-            "Re-run <b>Full Initialise</b> to regenerate the file."
+        raise RuntimeError(
+            f"Cannot parse AES key from '{path}'. "
+            "Expected 16/24/32 raw bytes, hex string, or base64."
         )
 
     def save_aes_key(self, key_bytes: bytes):
@@ -74,8 +71,8 @@ class KeyManager:
         path = self.s.get("session_key_path")
         if not path:
             frappe.throw(
-                "Session Key Path is not configured. "
-                "Set it in EFRIS Settings before initialising."
+                "Session Key Path is not configured in EFRIS Settings. "
+                "Set the full path to SessionAESKey.txt (e.g. /home/frappe/efris/SessionAESKey.txt)."
             )
         _ensure_dir(path)
         _write_bytes(path, key_bytes)
@@ -85,12 +82,9 @@ class KeyManager:
     def _read_key_file(self, path_field: str, label: str) -> str:
         path = self.s.get(path_field)
         if not path:
-            frappe.throw(f"{label} path is not configured in EFRIS Settings.")
+            raise RuntimeError(f"{label} path is not configured in EFRIS Settings.")
         if not os.path.isfile(path):
-            frappe.throw(
-                f"{label} file not found: {path}<br>"
-                "Run <b>Full Initialise (T101→T104)</b> to generate it."
-            )
+            raise RuntimeError(f"{label} file not found: {path}")
         return _read_text(path)
 
     def _write_key_file(self, path_field: str, content: str):

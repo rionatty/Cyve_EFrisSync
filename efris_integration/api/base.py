@@ -146,9 +146,50 @@ class EFRISClient:
     # ──────────────────────────────────────────────────────────────────────
 
     def _get_aes_key(self) -> bytes:
-        if self._aes_key is None:
+        """
+        Return the session AES key, auto-initialising if necessary.
+
+        SAP B1 never prompts the user to initialise — it just works.
+        If the session key file is missing we silently run T103+T104.
+        If the private key file is also missing we run T102 first.
+        """
+        if self._aes_key is not None:
+            return self._aes_key
+
+        try:
             self._aes_key = self.key_manager.get_aes_key()
+            return self._aes_key
+        except Exception:
+            pass  # key file missing or unreadable — auto-init below
+
+        frappe.logger("efris").info(
+            "EFRIS: session AES key not found — auto-initialising (T103+T104)."
+        )
+        self._auto_init_session()
+        self._aes_key = self.key_manager.get_aes_key()
         return self._aes_key
+
+    def _auto_init_session(self):
+        """
+        Silently run the minimum initialisation needed to get a valid session.
+
+        - If private key file is missing → run T102 first (download keys).
+        - Always run T103 (sign-in) + T104 (session AES key).
+
+        This mirrors the SAP B1 behaviour: the system auto-initialises
+        transparently without prompting the user.
+        """
+        from efris_integration.api.auth import client_init, sign_in, get_symmetric_key
+        import os
+
+        priv_key_path = self.settings.get("private_key_path")
+        if not priv_key_path or not os.path.isfile(priv_key_path):
+            frappe.logger("efris").info("EFRIS: private key missing — running T102.")
+            client_init()   # T102: download server public key + client private key
+
+        sign_in()           # T103: sign in / get device info
+        get_symmetric_key() # T104: get session AES key
+        self._aes_key = None  # force reload from file after T104 writes it
 
     def set_aes_key(self, key_bytes: bytes):
         """Called by auth.py after T104 to persist the session AES key."""

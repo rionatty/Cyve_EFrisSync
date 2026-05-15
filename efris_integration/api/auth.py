@@ -160,9 +160,18 @@ def get_symmetric_key() -> dict:
     client   = EFRISClient()
     settings = client.settings
 
-    private_key_pem = client.key_manager.get_private_key()
+    try:
+        private_key_pem = client.key_manager.get_private_key()
+    except RuntimeError:
+        frappe.throw(
+            "Client private key not found.<br>"
+            "Go to <b>EFRIS Settings</b> and click <b>Get Client Keys (T102)</b> first."
+        )
     if not private_key_pem:
-        frappe.throw("Client private key not found. Run T102 first.")
+        frappe.throw(
+            "Client private key file is empty.<br>"
+            "Go to <b>EFRIS Settings</b> and click <b>Get Client Keys (T102)</b>."
+        )
 
     result = client.call("T104", encrypt=False)
 
