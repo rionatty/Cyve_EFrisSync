@@ -30,14 +30,61 @@ def aes_decrypt(data: bytes, key: bytes) -> bytes:
     return unpad(cipher.decrypt(data), AES.block_size)
 
 
+def _import_rsa_key(key_data: str):
+    """
+    Import an RSA key tolerating every format EFRIS/SAP B1 may produce:
+      1. Standard PEM  (-----BEGIN [RSA] PRIVATE KEY-----)
+      2. Base64-encoded DER without PEM headers  (raw PKCS#8 blob from SAP CNG export)
+      3. DER wrapped in PKCS#8 PEM headers  (most pycryptodome-friendly)
+      4. DER wrapped in PKCS#1 RSA PEM headers
+    Raises ValueError with a helpful message if nothing works.
+    """
+    text = (key_data or "").strip()
+
+    # 1. Try as-is — covers PEM and raw DER bytes that happen to be valid UTF-8
+    try:
+        return RSA.import_key(text)
+    except (ValueError, IndexError, TypeError):
+        pass
+
+    # 2. Try base64-decoded DER (SAP B1 CNG Pkcs8PrivateBlob exported as base64)
+    try:
+        der = base64.b64decode(text + "==")
+        return RSA.import_key(der)
+    except Exception:
+        pass
+
+    # 3. Wrap in PKCS#8 PEM header (most common for CNG-generated keys)
+    try:
+        pem = f"-----BEGIN PRIVATE KEY-----\n{text}\n-----END PRIVATE KEY-----"
+        return RSA.import_key(pem)
+    except Exception:
+        pass
+
+    # 4. Wrap in PKCS#1 RSA PEM header
+    try:
+        pem = f"-----BEGIN RSA PRIVATE KEY-----\n{text}\n-----END RSA PRIVATE KEY-----"
+        return RSA.import_key(pem)
+    except Exception:
+        pass
+
+    raise ValueError(
+        "RSA key format is not supported.<br><br>"
+        "The private key in <b>PrivateKey.txt</b> is in an unrecognised format.<br>"
+        "Run <b>Full Initialise (T101 → T104)</b> to regenerate it, or check that "
+        "the file contains a valid PEM or base64-encoded PKCS#8 private key.<br>"
+        f"Key preview: <code>{text[:80]}</code>"
+    )
+
+
 def rsa_decrypt(encrypted_b64: str, private_key_pem: str) -> bytes:
-    key = RSA.import_key(private_key_pem)
+    key = _import_rsa_key(private_key_pem)
     cipher = PKCS1_OAEP.new(key)
     return cipher.decrypt(base64.b64decode(encrypted_b64))
 
 
 def rsa_encrypt(data: bytes, public_key_pem: str) -> str:
-    key = RSA.import_key(public_key_pem)
+    key = _import_rsa_key(public_key_pem)
     cipher = PKCS1_OAEP.new(key)
     return base64.b64encode(cipher.encrypt(data)).decode()
 
@@ -97,11 +144,11 @@ def rsa_sign(content_b64: str, private_key_pem: str) -> str:
 
     Args:
         content_b64: the base64 string of the AES-encrypted payload
-        private_key_pem: client private key PEM (from PrivateKey.txt)
+        private_key_pem: client private key (PEM, base64 DER, or raw DER)
     Returns:
         base64-encoded signature string
     """
-    key = RSA.import_key(private_key_pem)
+    key = _import_rsa_key(private_key_pem)
     h   = SHA1.new(content_b64.encode("utf-8"))
     sig = pkcs1_15.new(key).sign(h)
     return base64.b64encode(sig).decode("utf-8")
