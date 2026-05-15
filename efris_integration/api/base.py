@@ -50,16 +50,27 @@ class EFRISClient:
         doc_type: str = "",
         doc_name: str = "",
         encrypt: bool = True,
+        sign: bool = False,
     ) -> dict:
         """
-        Build → encrypt → POST → decrypt → return inner data dict.
+        Build → encrypt → (optionally sign) → POST → decrypt → return inner data dict.
         Raises EFRISAPIError when EFRIS returnCode != '00'.
+
+        sign=True: adds RSA SHA1 PKCS1v1.5 signature of the base64 content string.
+                   Mirrors ExchangeRateForm.cs: RSACng.SignData(UTF8(contentB64), SHA1, PKCS1)
+                   Required for T126 (exchange rate) and any T-code that needs a signature field.
         """
         global_info = make_global_info(interface_code, self.settings)
 
         # ── Build data block ───────────────────────────────────────────
         if payload and encrypt:
             data_block = encode_request_data(payload, self._get_aes_key(), compress=False)
+            if sign:
+                from efris_integration.utils.encryption import rsa_sign
+                data_block["signature"] = rsa_sign(
+                    data_block["content"],
+                    self.key_manager.get_private_key(),
+                )
         elif payload:
             # Auth calls (T101–T104) sent plain (encryptCode=0)
             data_block = {

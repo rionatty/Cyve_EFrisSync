@@ -19,16 +19,14 @@ No username/password is stored or sent. Authentication is entirely via
 the RSA key-exchange in T102/T104.
 """
 
-import base64
 from datetime import datetime
 
 import frappe
 
 from efris_integration.api.base import EFRISClient
 from efris_integration.utils.encryption import (
-    aes_decrypt,
-    derive_private_key_aes_key,
     rsa_decrypt,
+    try_decrypt_private_key,
 )
 
 
@@ -66,9 +64,10 @@ def client_init() -> dict:
         keyTable      — (ignored)
 
     AES key for private key decryption:
-        (TaxpayerID[:10] + date_as_ddMMyy).encode()[:16]
+        try_decrypt_private_key() tries every known EFRIS key derivation strategy.
+        Standard (SAP B1 EncryptionHelper.cs): TaxpayerID[:10] + ddMMyy → 16 bytes
     """
-    client  = EFRISClient()
+    client   = EFRISClient()
     settings = client.settings
 
     result = client.call("T102", encrypt=False)
@@ -79,7 +78,7 @@ def client_init() -> dict:
 
     if not server_pub_key or not encrypted_priv_key:
         frappe.log_error(
-            f"T102 keys: {list(result.keys())}\nFull: {result}",
+            f"T102 response keys: {list(result.keys())}\nFull response: {result}",
             "EFRIS T102 Unexpected Response",
         )
         frappe.throw(
@@ -89,11 +88,21 @@ def client_init() -> dict:
             f"Keys in response: <code>{list(result.keys())}</code>"
         )
 
-    # Decrypt private key: AES key = TaxpayerID[:10] + ddMMyy
-    today_ddmmyy = datetime.now().strftime("%d%m%y")
-    aes_key      = derive_private_key_aes_key(settings.taxpayer_id, today_ddmmyy)
-    priv_bytes   = aes_decrypt(base64.b64decode(encrypted_priv_key), aes_key)
-    private_key_pem = priv_bytes.decode("utf-8").strip()
+    # Log the raw values for diagnostics (first 80 chars only — safe to log)
+    frappe.logger("efris").debug(
+        f"T102 clientPriKey[:80]={encrypted_priv_key[:80]}  "
+        f"serverPubKey[:40]={server_pub_key[:40]}"
+    )
+
+    # Decrypt private key — tries every known key derivation strategy automatically
+    try:
+        private_key_pem = try_decrypt_private_key(
+            encrypted_priv_key,
+            taxpayer_id=settings.taxpayer_id or "",
+            tin=settings.tin or "",
+        )
+    except ValueError as exc:
+        frappe.throw(str(exc), title="T102 Private Key Decrypt Failed")
 
     # Write to files (U_OT_EPK path, U_OT_PK path)
     km = client.key_manager
