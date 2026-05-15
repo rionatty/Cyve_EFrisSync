@@ -389,14 +389,12 @@ def full_initialise() -> dict:
     frappe.publish_progress(10,  title="EFRIS Init", description="T101 — Testing connection…")
     results["server_time"] = get_server_time()
 
-    frappe.publish_progress(35,  title="EFRIS Init", description="T102 — Getting client keys…")
-    results["t102"] = client_init()
-
-    frappe.publish_progress(65,  title="EFRIS Init", description="T103 — Getting device info…")
-    results["t103"] = sign_in()
-
-    frappe.publish_progress(90,  title="EFRIS Init", description="T104 — Getting session key…")
+    # URA guide order: T104 (AES key) → T103 (optional sign-in)
+    frappe.publish_progress(50,  title="EFRIS Init", description="T104 — Getting session key…")
     results["t104"] = get_symmetric_key()
+
+    frappe.publish_progress(80,  title="EFRIS Init", description="T103 — Getting device info…")
+    results["t103"] = sign_in()
 
     frappe.publish_progress(100, title="EFRIS Init", description="Done ✅")
 

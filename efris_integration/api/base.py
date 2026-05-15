@@ -191,9 +191,11 @@ class EFRISClient:
         """
         from efris_integration.api.auth import sign_in, get_symmetric_key
 
-        # URA guide order: T104 first (get AES key), then T103 (sign in)
-        get_symmetric_key() # T104: RSA-decrypt passowrdDes → session AES key
-        sign_in()           # T103: sign in / get device info
+        # URA guide: T104 gives the session AES key used for all subsequent calls.
+        # T103 (sign-in) is optional and must NOT be called here — on EFRIS test
+        # environment calling T103 appears to reset the session, invalidating the
+        # key just obtained from T104.
+        get_symmetric_key() # T104: get session AES key
         self._aes_key = None  # force reload from file after T104 writes it
 
     def set_aes_key(self, key_bytes: bytes):

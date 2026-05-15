@@ -158,10 +158,10 @@ def _refresh_session(client: EFRISClient):
     Only the session AES key expires — the private key (T102) stays valid.
     Resets the cached AES key so the next T126 call reads the fresh key from file.
     """
-    from efris_integration.api.auth import sign_in, get_symmetric_key
-    # URA guide order: T104 first (get AES key), then T103 (sign in)
-    get_symmetric_key() # T104 — new session AES key
-    sign_in()           # T103 — sign in
+    from efris_integration.api.auth import get_symmetric_key
+    # T103 (sign-in) is optional per URA guide and must NOT be called during
+    # refresh — it resets the EFRIS session, invalidating the T104 AES key.
+    get_symmetric_key() # T104 only — get fresh session AES key
     client._aes_key = None   # force reload from SessionAESKey.txt on next call
 
 
