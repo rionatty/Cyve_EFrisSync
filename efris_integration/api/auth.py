@@ -179,7 +179,7 @@ def get_symmetric_key() -> dict:
             "Check <b>Error Log</b> for full T104 response."
         )
 
-    aes_key_bytes = rsa_decrypt(encrypted_aes_b64, private_key_pem)
+    aes_key_bytes = _extract_aes_key(encrypted_aes_b64, private_key_pem)
     client.set_aes_key(aes_key_bytes)   # writes to SessionAESKey.txt
 
     frappe.msgprint(
@@ -187,6 +187,81 @@ def get_symmetric_key() -> dict:
         indicator="green",
     )
     return {"status": "AES Key Set", "key_bits": len(aes_key_bytes) * 8}
+
+
+# ─── T104 AES key extraction ─────────────────────────────────────────────
+
+def _extract_aes_key(value: str, private_key_pem: str) -> bytes:
+    """
+    Extract the session AES key from T104 passowrdDes.
+
+    EFRIS implementations differ on how this field is encoded:
+      1. RSA-PKCS1v1.5 encrypted with client public key  (most common)
+      2. RSA-OAEP encrypted
+      3. Plain base64 of the raw AES key bytes  (some test environments)
+      4. Hex string of the raw AES key bytes
+
+    We try every approach and return the first that yields a valid
+    AES key (16, 24, or 32 bytes). Logs which approach worked.
+    """
+    import base64 as _b64
+    from efris_integration.utils.encryption import _import_rsa_key
+    from Crypto.Cipher import PKCS1_v1_5, PKCS1_OAEP as _OAEP
+    from Crypto.PublicKey import RSA as _RSA
+
+    raw = _b64.b64decode(value + "==")
+
+    # ── 1. RSA-PKCS1v1.5 ─────────────────────────────────────────────────
+    try:
+        key      = _import_rsa_key(private_key_pem)
+        sentinel = object()
+        result   = PKCS1_v1_5.new(key).decrypt(raw, sentinel)
+        if result is not sentinel and len(result) in (16, 24, 32):
+            frappe.logger("efris").info("T104: AES key via RSA-PKCS1v1.5")
+            return result
+    except Exception:
+        pass
+
+    # ── 2. RSA-OAEP ──────────────────────────────────────────────────────
+    try:
+        key    = _import_rsa_key(private_key_pem)
+        result = _OAEP.new(key).decrypt(raw)
+        if len(result) in (16, 24, 32):
+            frappe.logger("efris").info("T104: AES key via RSA-OAEP")
+            return result
+    except Exception:
+        pass
+
+    # ── 3. Plain base64 AES key (no RSA) ─────────────────────────────────
+    if len(raw) in (16, 24, 32):
+        frappe.logger("efris").info(f"T104: AES key is plain base64 ({len(raw)*8}-bit)")
+        return raw
+
+    # ── 4. Hex string ────────────────────────────────────────────────────
+    try:
+        text = value.strip()
+        if len(text) in (32, 48, 64):
+            key_bytes = bytes.fromhex(text)
+            if len(key_bytes) in (16, 24, 32):
+                frappe.logger("efris").info("T104: AES key is hex string")
+                return key_bytes
+    except Exception:
+        pass
+
+    # ── Diagnostic log ────────────────────────────────────────────────────
+    frappe.log_error(
+        f"T104 passowrdDes: could not extract valid AES key.\n"
+        f"value[:80]  = {value[:80]}\n"
+        f"raw length  = {len(raw)} bytes\n"
+        f"raw[:32]    = {raw[:32].hex()}",
+        "EFRIS T104 AES Key Extract Failed",
+    )
+    frappe.throw(
+        "T104: cannot extract a valid session AES key from passowrdDes.<br>"
+        "See <b>Error Log → EFRIS T104 AES Key Extract Failed</b> for raw bytes.<br>"
+        "Run <b>Full Initialise (T101→T104)</b> to regenerate all keys.",
+        title="T104 Key Error",
+    )
 
 
 # ─── Full Init Sequence ───────────────────────────────────────────────────
