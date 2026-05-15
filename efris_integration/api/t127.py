@@ -68,7 +68,11 @@ def get_excise_rate_from_t127(goods_category_id: str) -> dict | None:
     return None
 
 
-def invalidate_cache():
-    """Call this when settings change to force T127 re-fetch."""
+def invalidate_cache(doc=None, method=None):
+    """
+    Clear the T127 in-memory cache.
+    Called automatically on EFRIS Settings save (doc_events hook),
+    so Frappe passes (doc, method) — both are optional here.
+    """
     global _T127_CACHE
     _T127_CACHE = {}
