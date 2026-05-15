@@ -66,10 +66,17 @@ def client_init() -> dict:
     encrypted_priv_key = result.get("clientPrivateKey", "")
 
     if not server_pub_key or not encrypted_priv_key:
+        # Log the full result so we can see what field names EFRIS actually used
+        frappe.log_error(
+            f"T102 raw result keys: {list(result.keys())}\nFull result: {result}",
+            "EFRIS T102 Unexpected Response",
+        )
         frappe.throw(
-            "T102 returned incomplete key data. "
-            f"Keys received: serverPublicKey={'yes' if server_pub_key else 'NO'}, "
-            f"clientPrivateKey={'yes' if encrypted_priv_key else 'NO'}"
+            "T102 returned incomplete key data.<br>"
+            f"serverPublicKey: {'✅' if server_pub_key else '❌ missing'}<br>"
+            f"clientPrivateKey: {'✅' if encrypted_priv_key else '❌ missing'}<br><br>"
+            f"Response keys found: <code>{list(result.keys())}</code><br>"
+            "Check <b>Error Log</b> for the full T102 response to see the actual field names."
         )
 
     # Decrypt private key

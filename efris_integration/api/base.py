@@ -120,12 +120,8 @@ class EFRISClient:
                     )
                 frappe.throw(f"EFRIS response decryption failed: {exc}")
 
-        # Unencrypted / plain JSON string in content
-        if isinstance(content, str) and content.strip().startswith("{"):
-            return json.loads(content)
-        if isinstance(content, dict):
-            return content
-        return {}
+        # Unencrypted content — try every known format
+        return _parse_plain_content(content)
 
     # ──────────────────────────────────────────────────────────────────────
     # Key access helpers (delegates to KeyManager)
@@ -190,3 +186,54 @@ class EFRISClient:
             frappe.throw(
                 f"EFRIS returned invalid JSON. Raw: {exc}"
             )
+
+
+def _parse_plain_content(content) -> dict:
+    """
+    Parse the `data.content` field from an unencrypted EFRIS response.
+
+    EFRIS can return content in four forms depending on T-code and version:
+      1. Python dict already parsed by requests.json()
+      2. Plain JSON string  e.g. '{"serverPublicKey":"..."}'
+      3. Base64-encoded JSON string  (most common for T101/T102/T103/T104)
+      4. Base64-encoded JSON wrapped in a list  e.g. '[{...}]'
+    """
+    import base64
+
+    # 1. Already a dict or list
+    if isinstance(content, (dict, list)):
+        return content if isinstance(content, dict) else {"data": content}
+
+    if not isinstance(content, str) or not content.strip():
+        return {}
+
+    text = content.strip()
+
+    # 2. Plain JSON object or array
+    if text.startswith(("{", "[")):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return {"data": parsed}
+            return parsed
+        except json.JSONDecodeError:
+            pass
+
+    # 3. Base64-encoded JSON (most EFRIS T10x responses)
+    try:
+        decoded = base64.b64decode(text + "==")   # pad liberally
+        decoded_str = decoded.decode("utf-8").strip()
+        if decoded_str.startswith(("{", "[")):
+            parsed = json.loads(decoded_str)
+            if isinstance(parsed, list):
+                return {"data": parsed}
+            return parsed
+    except Exception:
+        pass
+
+    # 4. Nothing worked — log and return empty so caller can report the gap
+    frappe.log_error(
+        f"_parse_plain_content: unrecognised content format: {text[:200]}",
+        "EFRIS Response Parse Warning",
+    )
+    return {}
