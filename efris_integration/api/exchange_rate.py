@@ -2,15 +2,20 @@
 T126 — Fetch URA Exchange Rates
 T120 — Exchange Rate model
 
-Mirrors: ExchangeRateForm.cs, T120.cs
+Mirrors: URASetting.cs → FetchAndUpdateExchangeRates (EFRIS Settings screen)
 
-SAP B1 flow (ExchangeRateForm.cs → FetchAndUpdateExchangeRates):
-  1. Build payload:  {"queryDate": "yyyy-MM-dd 00:00:00"}
-  2. AES-128-ECB encrypt payload + RSA SHA1 signature
-  3. POST T126; parse list of T120 objects
-  4. T120 fields (exact lowercase): currency, rate, nowTime
-  5. Skip UGX (local base currency)
-  6. Upsert into ERPNext Currency Exchange (from_currency → UGX)
+SAP B1 flow (URASetting.cs):
+  1. Build request with EMPTY data block — NO content, NO signature, NO queryDate
+  2. POST T126 with InterfaceCode = "T126"
+  3. Response is AES-encrypted (encryptCode=2) → decrypt with session AES key
+  4. Parse list of T120 objects
+  5. T120 fields (exact lowercase): currency, rate, nowTime
+  6. Skip UGX (local base currency)
+  7. Upsert into ERPNext Currency Exchange (from_currency → UGX)
+
+Note: ExchangeRateForm.cs (a separate screen) sends an encrypted queryDate.
+      URASetting.cs (the EFRIS Settings screen, which is what we implement here)
+      sends NO payload at all — just the global envelope.
 """
 
 from datetime import date, datetime, timedelta
@@ -25,6 +30,10 @@ def sync_exchange_rates(from_date: str = None, to_date: str = None) -> dict:
     """
     Fetch EFRIS exchange rates and upsert into ERPNext Currency Exchange.
     Called by the "Fetch URA Exchange Rates" button and daily scheduler.
+
+    T126 sends NO payload (URASetting.cs behaviour) — EFRIS returns
+    current-day rates.  A single T126 call is made; the returned rates
+    are stored against every date in the from_date → to_date range.
     """
     today_str = date.today().isoformat()
     from_date = from_date or today_str
@@ -36,41 +45,65 @@ def sync_exchange_rates(from_date: str = None, to_date: str = None) -> dict:
     except ValueError as exc:
         frappe.throw(f"Invalid date: {exc}")
 
-    client      = EFRISClient()
+    client = EFRISClient()
+
+    # ── Single T126 call — no payload, no queryDate (URASetting.cs) ──────
+    rate_list = _fetch_rates(client)
+
+    if not rate_list:
+        frappe.msgprint("⚠️ T126 returned no exchange rates.", indicator="orange")
+        return {"synced": 0, "date": today_str}
+
+    # ── Upsert rates for every date in the requested range ────────────────
     total_saved = 0
-    last_date   = today_str
+    now_time    = ""
+    current     = d_from
 
-    current = d_from
     while current <= d_to:
-        saved, fetched_date = _fetch_one_day(client, current)
-        total_saved += saved
-        last_date    = fetched_date or current.isoformat()
-        current     += timedelta(days=1)
+        date_str = current.isoformat()
+        for item in rate_list:
+            currency = (item.get("currency") or "").strip().upper()
+            rate_val = item.get("rate")
+            now_time = item.get("nowTime") or now_time
 
+            if not currency or rate_val is None or currency == "UGX":
+                continue
+            try:
+                rate_float = float(rate_val)
+            except (TypeError, ValueError):
+                continue
+            if rate_float <= 0:
+                continue
+
+            _upsert_rate(currency, rate_float, date_str)
+            total_saved += 1
+
+        current += timedelta(days=1)
+
+    display_date = _parse_date(now_time) or today_str
     frappe.db.commit()
     frappe.msgprint(
-        f"✅ {total_saved} exchange rate(s) updated for {last_date}.",
+        f"✅ {total_saved} exchange rate(s) updated for {display_date}.",
         indicator="green",
     )
-    return {"synced": total_saved, "date": last_date}
+    return {"synced": total_saved, "date": display_date}
 
 
-def _fetch_one_day(client: EFRISClient, query_date: date) -> tuple[int, str]:
-    """Call T126 for one date, parse T120 list, upsert rates.
-    Auto-refreshes the session once if the AES key is stale (code 15/16/99)."""
-    query_date_str = query_date.strftime("%Y-%m-%d") + " 00:00:00"
-
+def _fetch_rates(client: EFRISClient) -> list:
+    """
+    Call T126 once (empty payload) and return the raw T120 list.
+    Auto-refreshes the session once if the AES key is stale (code 15/16/99).
+    """
     try:
-        result = _call_t126(client, query_date_str)
+        result = _call_t126(client)
     except EFRISAPIError as exc:
-        # Session-expired codes — refresh T103+T104 and retry once silently
         if exc.code in ("15", "16", "99", "SESSION_EXPIRED"):
             frappe.logger("efris").info(
                 f"T126 [{exc.code}] — refreshing session (T103+T104) and retrying."
             )
             _refresh_session(client)
             try:
-                result = _call_t126(client, query_date_str)
+                result = _call_t126(client)
             except EFRISAPIError as exc2:
                 frappe.log_error(
                     f"T126 [{exc2.code}] {exc2.message} after session refresh",
@@ -82,49 +115,36 @@ def _fetch_one_day(client: EFRISClient, query_date: date) -> tuple[int, str]:
                 )
         else:
             frappe.log_error(
-                f"T126 [{exc.code}] {exc.message} for {query_date_str}",
+                f"T126 [{exc.code}] {exc.message}",
                 "EFRIS Exchange Rate Error",
             )
             frappe.throw(f"❌ T126 failed: [{exc.code}] {exc.message}", title="Exchange Rate Error")
 
     rate_list = _extract_rate_list(result)
     if not rate_list:
-        frappe.logger("efris").warning(f"T126: no rates for {query_date_str}. Raw: {result}")
-        return 0, query_date.isoformat()
-
-    date_str = query_date.isoformat()
-    saved    = 0
-    now_time = ""
-
-    for item in rate_list:
-        currency = (item.get("currency") or "").strip().upper()
-        rate_val = item.get("rate")
-        now_time = item.get("nowTime") or now_time
-
-        if not currency or rate_val is None or currency == "UGX":
-            continue
-        try:
-            rate_float = float(rate_val)
-        except (TypeError, ValueError):
-            continue
-        if rate_float <= 0:
-            continue
-
-        _upsert_rate(currency, rate_float, date_str)
-        saved += 1
-
-    return saved, _parse_date(now_time) or date_str
+        frappe.logger("efris").warning(f"T126: no rates in response. Raw: {result}")
+    return rate_list
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-def _call_t126(client: EFRISClient, query_date_str: str) -> dict:
-    """POST T126 with AES-encrypted + RSA-signed queryDate payload."""
+def _call_t126(client: EFRISClient) -> dict:
+    """
+    POST T126 with an empty data block — mirrors URASetting.cs exactly.
+
+    SAP B1 URASetting.cs FetchAndUpdateExchangeRates() sends T126 with
+    NO payload, NO content, NO signature.  The server returns today's
+    exchange rates regardless; the queryDate parameter is not used in
+    this call path.
+
+    The response comes back AES-encrypted (encryptCode=2) and is
+    decrypted automatically by EFRISClient.call().
+    """
     return client.call(
         "T126",
-        payload={"queryDate": query_date_str},
-        encrypt=True,
-        sign=True,
+        payload=None,       # empty data block — matches URASetting.cs
+        encrypt=False,      # nothing to encrypt
+        sign=False,         # no signature
         doc_type="Currency Exchange",
         doc_name="",
     )

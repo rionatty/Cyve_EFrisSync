@@ -195,14 +195,16 @@ def _extract_aes_key(value: str, private_key_pem: str) -> bytes:
     """
     Extract the session AES key from T104 passowrdDes.
 
-    EFRIS implementations differ on how this field is encoded:
-      1. RSA-PKCS1v1.5 encrypted with client public key  (most common)
-      2. RSA-OAEP encrypted
-      3. Plain base64 of the raw AES key bytes  (some test environments)
-      4. Hex string of the raw AES key bytes
+    SAP B1 source (EncryptionHelper.cs) has NO RSA decrypt — the client
+    private key is used ONLY for RSA signing (RSACng.SignData).
+    Therefore passowrdDes is a plain base64 AES key in the SAP B1 / URA
+    Uganda implementation.
 
-    We try every approach and return the first that yields a valid
-    AES key (16, 24, or 32 bytes). Logs which approach worked.
+    Order of attempts (SAP-source-based first, fallbacks after):
+      1. Plain base64 — decode and check len in (16, 24, 32)  ← SAP B1
+      2. RSA-PKCS1v1.5 decrypt  ← other EFRIS implementations
+      3. RSA-OAEP decrypt        ← last resort
+      4. Hex string              ← dev/test environments
     """
     import base64 as _b64
     from efris_integration.utils.encryption import _import_rsa_key
@@ -211,7 +213,15 @@ def _extract_aes_key(value: str, private_key_pem: str) -> bytes:
 
     raw = _b64.b64decode(value + "==")
 
-    # ── 1. RSA-PKCS1v1.5 ─────────────────────────────────────────────────
+    # ── 1. Plain base64 AES key (no RSA) ─────────────────────────────────
+    # SAP B1 EncryptionHelper.cs has NO RSA decrypt — the private key is
+    # used ONLY for signing (RSACng.SignData). passowrdDes is therefore
+    # the session AES key encoded as plain base64, not RSA-encrypted.
+    if len(raw) in (16, 24, 32):
+        frappe.logger("efris").info(f"T104: AES key is plain base64 ({len(raw)*8}-bit)")
+        return raw
+
+    # ── 2. RSA-PKCS1v1.5 (fallback for non-SAP B1 EFRIS implementations) ─
     try:
         key      = _import_rsa_key(private_key_pem)
         sentinel = object()
@@ -222,7 +232,7 @@ def _extract_aes_key(value: str, private_key_pem: str) -> bytes:
     except Exception:
         pass
 
-    # ── 2. RSA-OAEP ──────────────────────────────────────────────────────
+    # ── 3. RSA-OAEP (last resort) ─────────────────────────────────────────
     try:
         key    = _import_rsa_key(private_key_pem)
         result = _OAEP.new(key).decrypt(raw)
@@ -231,11 +241,6 @@ def _extract_aes_key(value: str, private_key_pem: str) -> bytes:
             return result
     except Exception:
         pass
-
-    # ── 3. Plain base64 AES key (no RSA) ─────────────────────────────────
-    if len(raw) in (16, 24, 32):
-        frappe.logger("efris").info(f"T104: AES key is plain base64 ({len(raw)*8}-bit)")
-        return raw
 
     # ── 4. Hex string ────────────────────────────────────────────────────
     try:
