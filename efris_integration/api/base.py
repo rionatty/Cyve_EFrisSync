@@ -121,19 +121,27 @@ class EFRISClient:
             except (ValueError, Exception) as exc:
                 err = str(exc).lower()
 
+                # Always log the raw content so we can debug key issues
+                frappe.log_error(
+                    f"[{interface_code}] AES decrypt failed: {exc}\n"
+                    f"content length : {len(content)} chars\n"
+                    f"content preview: {content[:120]}\n"
+                    f"encryptCode    : {encrypt_code}\n"
+                    f"zipCode        : {desc.get('zipCode', '?')}",
+                    f"EFRIS Decrypt Fail [{interface_code}]",
+                )
+
                 # Content not a multiple of 16 bytes → not actually AES-ECB.
                 # EFRIS sometimes marks unencrypted responses as encryptCode=2.
-                # Fall through to plain-content parser instead of crashing.
                 if "block boundary" in err or "aligned" in err or "multiple" in err:
-                    frappe.logger("efris").warning(
-                        f"[{interface_code}] encryptCode=2 but content is not "
-                        f"AES-aligned — falling back to plain parse. ({exc})"
-                    )
                     return _parse_plain_content(content)
 
-                # Wrong padding → stale session key — raise SESSION_EXPIRED
-                # so the caller (exchange_rate._fetch_rates) can auto-refresh.
+                # Padding error → try plain parse first (response may not be
+                # encrypted despite encryptCode=2), then raise SESSION_EXPIRED.
                 if "padding" in err or "incorrect" in err:
+                    plain = _parse_plain_content(content)
+                    if plain:
+                        return plain
                     raise EFRISAPIError("SESSION_EXPIRED", "Session AES key is stale.")
 
                 frappe.throw(f"EFRIS response decryption failed: {exc}")
