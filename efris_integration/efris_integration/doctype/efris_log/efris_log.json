@@ -24,7 +24,7 @@
     {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Success\nFailed\nPending", "in_list_view": 1},
     {"fieldname": "column_break_1", "fieldtype": "Column Break"},
     {"fieldname": "document_type", "fieldtype": "Data", "label": "Document Type", "in_list_view": 1},
-    {"fieldname": "document_name", "fieldtype": "Dynamic Link", "label": "Document Name", "options": "document_type"},
+    {"fieldname": "document_name", "fieldtype": "Data", "label": "Document Name", "in_list_view": 1},
     {"fieldname": "section_request", "fieldtype": "Section Break", "label": "Request"},
     {"fieldname": "request_payload", "fieldtype": "Long Text", "label": "Request Payload"},
     {"fieldname": "section_response", "fieldtype": "Section Break", "label": "Response"},

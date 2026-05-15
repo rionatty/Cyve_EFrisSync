@@ -47,37 +47,38 @@ class KeyManager:
     # ─── Session AES Key ───────────────────────────────────────────────────
 
     def get_aes_key(self) -> bytes:
-        """Return session AES key as raw bytes."""
+        """
+        Return session AES key as raw bytes.
+
+        Handles all formats written by SAP B1 or this app:
+          1. Raw 16/24/32 binary bytes
+          2. Base64-encoded string (with or without newlines/padding)
+          3. Hex-encoded string (32 hex chars = 16 bytes)
+        """
         path = self.s.get("session_key_path")
         if path and os.path.isfile(path):
             raw = _read_file_bytes(path)
-            # The file may contain raw binary or base64-encoded text
-            try:
-                # Try interpreting as base64
-                decoded = base64.b64decode(raw)
-                # If decode produced something that looks like a key (16/24/32 bytes)
-                if len(decoded) in (16, 24, 32):
-                    return decoded
-            except Exception:
-                pass
-            # Return raw bytes (binary key file)
-            if len(raw) in (16, 24, 32):
-                return raw
-            # Try as UTF-8 base64 string
-            try:
-                return base64.b64decode(raw.decode("utf-8").strip())
-            except Exception:
-                pass
-            frappe.throw(f"Cannot parse AES key from file: {path}")
+            key = _parse_aes_key_bytes(raw)
+            if key:
+                return key
+            frappe.throw(
+                f"Cannot parse AES key from file '{path}'. "
+                "Expected 16/24/32 raw bytes, base64, or hex string. "
+                "Re-run Full Initialise (T101→T104) to regenerate it."
+            )
 
-        # Fallback: DB
+        # Fallback: DB password field
         raw_b64 = self.s.get_password("session_aes_key", raise_exception=False)
         if not raw_b64:
             frappe.throw(
-                "Session AES key not found. "
+                "Session AES key not found in file or database. "
                 "Run Full Initialise (T101→T104) from EFRIS Settings first."
             )
-        return base64.b64decode(raw_b64)
+        # DB value is always stored as base64 by save_aes_key()
+        try:
+            return base64.b64decode(raw_b64)
+        except Exception:
+            frappe.throw("Session AES key in database is corrupted. Re-run Full Initialise.")
 
     def save_aes_key(self, key_bytes: bytes):
         """Persist AES key to file (if path configured) AND to DB."""
@@ -159,3 +160,45 @@ def _ensure_dir(path: str):
     directory = os.path.dirname(path)
     if directory:
         os.makedirs(directory, exist_ok=True)
+
+
+def _parse_aes_key_bytes(raw: bytes) -> bytes | None:
+    """
+    Try every known encoding to extract a valid AES key (16/24/32 bytes).
+    Returns the key bytes on success, or None if nothing works.
+
+    Order of attempts:
+      1. Raw binary (file written by save_aes_key in binary mode)
+      2. Hex string  (32/48/64 hex chars → 16/24/32 bytes)
+      3. Base64 string (standard or URL-safe, with/without padding)
+    """
+    # 1. Raw binary
+    if len(raw) in (16, 24, 32):
+        return raw
+
+    # Work with text from here
+    try:
+        text = raw.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
+
+    # 2. Hex string (case-insensitive)
+    if len(text) in (32, 48, 64):
+        try:
+            key = bytes.fromhex(text)
+            if len(key) in (16, 24, 32):
+                return key
+        except ValueError:
+            pass
+
+    # 3. Base64 (add padding if needed, try url-safe variant too)
+    for variant in (text, text.replace("-", "+").replace("_", "/")):
+        padded = variant + "=" * (-len(variant) % 4)
+        try:
+            key = base64.b64decode(padded)
+            if len(key) in (16, 24, 32):
+                return key
+        except Exception:
+            pass
+
+    return None

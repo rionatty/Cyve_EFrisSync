@@ -19,7 +19,7 @@ from efris_integration.api.base import EFRISClient
 def get_exchange_rates() -> list:
     """T120 — Retrieve current exchange rates from EFRIS."""
     client = EFRISClient()
-    result = client.call("T120", doc_type="Currency Exchange", doc_name="T120")
+    result = client.call("T120", doc_type="Currency Exchange", doc_name="")
     rates = result if isinstance(result, list) else result.get("rates", [])
     return rates
 
@@ -33,10 +33,10 @@ def sync_exchange_rates() -> dict:
     client = EFRISClient()
 
     try:
-        result = client.call("T126", doc_type="Currency Exchange", doc_name="T126")
+        result = client.call("T126", doc_type="Currency Exchange", doc_name="")
     except Exception:
         # Fall back to T120 if T126 not available
-        result = client.call("T120", doc_type="Currency Exchange", doc_name="T120")
+        result = client.call("T120", doc_type="Currency Exchange", doc_name="")
 
     rates = result if isinstance(result, list) else result.get("rates", [])
     today = date.today().isoformat()
