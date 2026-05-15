@@ -131,10 +131,10 @@ class EFRISClient:
                     )
                     return _parse_plain_content(content)
 
-                # Wrong padding → stale session key
+                # Wrong padding → stale session key — raise SESSION_EXPIRED
+                # so the caller (exchange_rate._fetch_rates) can auto-refresh.
                 if "padding" in err or "incorrect" in err:
-                    raise EFRISAPIError("SESSION_EXPIRED",
-                        "Session AES key is stale. Run Full Initialise (T101→T104).")
+                    raise EFRISAPIError("SESSION_EXPIRED", "Session AES key is stale.")
 
                 frappe.throw(f"EFRIS response decryption failed: {exc}")
 
@@ -165,30 +165,33 @@ class EFRISClient:
         frappe.logger("efris").info(
             "EFRIS: session AES key not found — auto-initialising (T103+T104)."
         )
-        self._auto_init_session()
+        try:
+            self._auto_init_session()
+        except Exception as exc:
+            frappe.log_error(frappe.get_traceback(), "EFRIS Auto-Init Failed")
+            frappe.throw(
+                f"EFRIS session could not be initialised automatically: {exc}<br>"
+                "Check <b>Error Log → EFRIS Auto-Init Failed</b> for details.<br>"
+                "Ensure EFRIS Settings (API URL, TaxpayerID, key file paths) are correct."
+            )
         self._aes_key = self.key_manager.get_aes_key()
         return self._aes_key
 
     def _auto_init_session(self):
         """
-        Silently run the minimum initialisation needed to get a valid session.
+        Silently run T103 + T104 to obtain a fresh session AES key.
 
-        - If private key file is missing → run T102 first (download keys).
-        - Always run T103 (sign-in) + T104 (session AES key).
+        T102 (private key download) is intentionally skipped here —
+        it is a one-time admin setup step and its failure must not block
+        normal operations like fetching exchange rates.
 
-        This mirrors the SAP B1 behaviour: the system auto-initialises
-        transparently without prompting the user.
+        SAP B1 behaviour: the system auto-initialises without prompting
+        the user.
         """
-        from efris_integration.api.auth import client_init, sign_in, get_symmetric_key
-        import os
-
-        priv_key_path = self.settings.get("private_key_path")
-        if not priv_key_path or not os.path.isfile(priv_key_path):
-            frappe.logger("efris").info("EFRIS: private key missing — running T102.")
-            client_init()   # T102: download server public key + client private key
+        from efris_integration.api.auth import sign_in, get_symmetric_key
 
         sign_in()           # T103: sign in / get device info
-        get_symmetric_key() # T104: get session AES key
+        get_symmetric_key() # T104: get session AES key (plain base64)
         self._aes_key = None  # force reload from file after T104 writes it
 
     def set_aes_key(self, key_bytes: bytes):

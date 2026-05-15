@@ -150,28 +150,21 @@ def sign_in() -> dict:
 @frappe.whitelist()
 def get_symmetric_key() -> dict:
     """
-    T104 — Mirrors T104.cs response model.
+    T104 — Get session AES key from EFRIS.
 
-    T104.cs fields (from SAP source, note the typo in the original):
-        passowrdDes  — session AES key RSA-encrypted with server public key
-
-    We decrypt with the client private key and write to SessionAESKey.txt.
+    T104.cs field: passowrdDes (SAP typo — two 'o's)
+    SAP B1: passowrdDes is a plain base64 AES key (EncryptionHelper.cs
+    has no RSA decrypt; private key is signing-only).
+    Private key is attempted as fallback only — T104 works without it.
     """
-    client   = EFRISClient()
-    settings = client.settings
+    client = EFRISClient()
 
+    # Private key is optional for T104 — passowrdDes is plain base64 in SAP B1.
+    # Try to read it for RSA fallback, but do not block if it's missing.
     try:
         private_key_pem = client.key_manager.get_private_key()
-    except RuntimeError:
-        frappe.throw(
-            "Client private key not found.<br>"
-            "Go to <b>EFRIS Settings</b> and click <b>Get Client Keys (T102)</b> first."
-        )
-    if not private_key_pem:
-        frappe.throw(
-            "Client private key file is empty.<br>"
-            "Go to <b>EFRIS Settings</b> and click <b>Get Client Keys (T102)</b>."
-        )
+    except (RuntimeError, Exception):
+        private_key_pem = ""
 
     result = client.call("T104", encrypt=False)
 
@@ -192,7 +185,7 @@ def get_symmetric_key() -> dict:
     client.set_aes_key(aes_key_bytes)   # writes to SessionAESKey.txt
 
     frappe.msgprint(
-        f"✅ T104: Session AES key ({len(aes_key_bytes) * 8}-bit) saved to file.",
+        f"✅ T104: Session AES key ({len(aes_key_bytes) * 8}-bit) saved.",
         indicator="green",
     )
     return {"status": "AES Key Set", "key_bits": len(aes_key_bytes) * 8}

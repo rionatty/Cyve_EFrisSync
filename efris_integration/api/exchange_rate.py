@@ -110,7 +110,8 @@ def _fetch_rates(client: EFRISClient) -> list:
                     "EFRIS Exchange Rate Error",
                 )
                 frappe.throw(
-                    f"❌ T126 failed: [{exc2.code}] {exc2.message}",
+                    f"❌ T126 failed after session refresh: [{exc2.code}] {exc2.message}<br>"
+                    "Check EFRIS Settings — API URL, TaxpayerID, and key file paths.",
                     title="Exchange Rate Error",
                 )
         else:
