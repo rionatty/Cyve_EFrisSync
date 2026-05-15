@@ -1,21 +1,26 @@
 """
 EFRIS Authentication  —  T101 → T102 → T103 → T104
 
-Mirrors: ClsSBOAddOn.InitializeApp(), T101.cs, T102.cs, T103.cs, T104.cs
+Mirrors exactly: ClsSBOAddOn.cs, URASetting.cs, T102.cs, T103.cs, T104.cs
 
-Key lifecycle:
-  T102 returns server_public_key (plain) + client_private_key (AES-encrypted).
-       AES key = TaxpayerID[:10] + date("ddMMyy")
-       Decrypted private key is saved to PrivateKey.txt (or DB)
+Key lifecycle (from SAP source):
+  T101 → Test connection, returns T101.CurrentTime
+  T102 → Returns T102.clientPriKey (AES-encrypted) + T102.serverPubKey
+           AES key = TaxpayerID[:10] + date("ddMMyy"), padded/truncated to 16 bytes
+           Decrypted private key written to PrivateKey.txt  (U_OT_PK path)
+           Server public key written to PublicKey.txt        (U_OT_EPK path)
+  T103 → Returns T103: Device, Taxpayer, TaxpayerBranch, TaxTypes (no password sent)
+           TIN + TaxpayerID auto-updated from response
+  T104 → Returns T104.passowrdDes (note: SAP source typo — double 'o')
+           RSA-decrypted with client private key → session AES key
+           Written to SessionAESKey.txt  (U_OT_SAK path)
 
-  T104 returns the session AES key, RSA-encrypted with the server public key.
-       We decrypt with the client private key and save to SessionAESKey.txt (or DB)
-
-All subsequent calls use the session AES key for payload encryption.
+No username/password is stored or sent. Authentication is entirely via
+the RSA key-exchange in T102/T104.
 """
 
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import frappe
 
@@ -25,19 +30,20 @@ from efris_integration.utils.encryption import (
     derive_private_key_aes_key,
     rsa_decrypt,
 )
-from efris_integration.utils.helpers import now_str
 
 
-# ─── T101: Get Server Time ─────────────────────────────────────────────────
+# ─── T101: Test Connection ─────────────────────────────────────────────────
 
 @frappe.whitelist()
 def get_server_time() -> str:
-    """T101 — Test connectivity and retrieve EFRIS server timestamp."""
+    """T101 — Mirrors TestEFRISConnection() in URASetting.cs."""
     client = EFRISClient()
     try:
         result = client.call("T101", encrypt=False)
     except Exception as exc:
         frappe.throw(f"T101 failed: {exc}")
+
+    # T101.cs: JsonPropertyName("currentTime")
     server_time = result.get("currentTime", "")
     frappe.msgprint(
         f"✅ EFRIS connection OK — Server time: {server_time}",
@@ -47,102 +53,102 @@ def get_server_time() -> str:
     return server_time
 
 
-# ─── T102: Client Initialisation ──────────────────────────────────────────
+# ─── T102: Get Client Keys ────────────────────────────────────────────────
 
 @frappe.whitelist()
 def client_init() -> dict:
     """
-    T102 — Download server RSA public key + obtain AES-encrypted client private key.
+    T102 — Download server RSA public key + AES-encrypted client private key.
 
-    Decryption key for the private key:
-        AES-128-ECB, key = (TaxpayerID[:10] + date_as_ddMMyy).encode()[:16]
+    T102.cs fields (from SAP source):
+        clientPriKey  — client private key, AES-128-ECB encrypted
+        serverPubKey  — server RSA public key (plain PEM)
+        keyTable      — (ignored)
+
+    AES key for private key decryption:
+        (TaxpayerID[:10] + date_as_ddMMyy).encode()[:16]
     """
-    client = EFRISClient()
+    client  = EFRISClient()
     settings = client.settings
 
     result = client.call("T102", encrypt=False)
 
-    # EFRIS uses abbreviated field names: serverPubKey / clientPriKey
-    server_pub_key     = (result.get("serverPubKey")
-                          or result.get("serverPublicKey", ""))
-    encrypted_priv_key = (result.get("clientPriKey")
-                          or result.get("clientPrivateKey", ""))
+    # Exact field names from T102.cs
+    server_pub_key     = result.get("serverPubKey", "")
+    encrypted_priv_key = result.get("clientPriKey", "")
 
     if not server_pub_key or not encrypted_priv_key:
-        # Log the full result so we can see what field names EFRIS actually used
         frappe.log_error(
-            f"T102 raw result keys: {list(result.keys())}\nFull result: {result}",
+            f"T102 keys: {list(result.keys())}\nFull: {result}",
             "EFRIS T102 Unexpected Response",
         )
         frappe.throw(
-            "T102 returned incomplete key data.<br>"
-            f"serverPublicKey: {'✅' if server_pub_key else '❌ missing'}<br>"
-            f"clientPrivateKey: {'✅' if encrypted_priv_key else '❌ missing'}<br><br>"
-            f"Response keys found: <code>{list(result.keys())}</code><br>"
-            "Check <b>Error Log</b> for the full T102 response to see the actual field names."
+            f"T102 returned incomplete key data.<br>"
+            f"serverPubKey: {'✅' if server_pub_key else '❌'}<br>"
+            f"clientPriKey: {'✅' if encrypted_priv_key else '❌'}<br>"
+            f"Keys in response: <code>{list(result.keys())}</code>"
         )
 
-    # Decrypt private key
+    # Decrypt private key: AES key = TaxpayerID[:10] + ddMMyy
     today_ddmmyy = datetime.now().strftime("%d%m%y")
-    aes_key = derive_private_key_aes_key(settings.taxpayer_id, today_ddmmyy)
-    priv_key_bytes = aes_decrypt(base64.b64decode(encrypted_priv_key), aes_key)
-    private_key_pem = priv_key_bytes.decode("utf-8").strip()
+    aes_key      = derive_private_key_aes_key(settings.taxpayer_id, today_ddmmyy)
+    priv_bytes   = aes_decrypt(base64.b64decode(encrypted_priv_key), aes_key)
+    private_key_pem = priv_bytes.decode("utf-8").strip()
 
-    # Persist via KeyManager (writes to file if path configured, always writes to DB)
+    # Write to files (U_OT_EPK path, U_OT_PK path)
     km = client.key_manager
     km.save_public_key(server_pub_key)
     km.save_private_key(private_key_pem)
 
-    settings.db_set("init_status", "T102 OK — Keys obtained", update_modified=False)
-
-    frappe.msgprint("✅ T102: Server public key and client private key obtained.", indicator="green")
-    return {"status": "OK", "server_pub_key_preview": server_pub_key[:40] + "..."}
+    frappe.msgprint("✅ T102: Server public key and client private key saved to files.", indicator="green")
+    return {"status": "OK", "server_pub_key_preview": server_pub_key[:40] + "…"}
 
 
-# ─── T103: Sign In ────────────────────────────────────────────────────────
+# ─── T103: Sign In / Get Device Info ──────────────────────────────────────
 
 @frappe.whitelist()
 def sign_in() -> dict:
-    """T103 — Authenticate with EFRIS username/password."""
-    client = EFRISClient()
+    """
+    T103 — Mirrors T103.cs response model.
+
+    SAP sends empty payload; EFRIS returns:
+        T103.Device, T103.Taxpayer, T103.TaxpayerBranch, T103.TaxTypes, …
+
+    NO username/password is sent. Authentication is via the RSA key exchange.
+    TIN and TaxpayerID in settings are updated from the response if present.
+    """
+    client   = EFRISClient()
     settings = client.settings
 
-    password = settings.get_password("efris_password", raise_exception=False) or ""
-    if not password:
-        frappe.throw("EFRIS password not configured in EFRIS Settings.")
+    result = client.call("T103", encrypt=False)
 
-    payload = {
-        "userName": settings.efris_username,
-        "password": password,
-        "tin": settings.tin,
-        "appId": settings.app_id,
-    }
+    # Extract taxpayer info from T103 response and persist to settings
+    taxpayer = result.get("taxpayer", {})
+    if isinstance(taxpayer, dict):
+        tin = taxpayer.get("tin", "") or taxpayer.get("taxpayerTin", "")
+        tp_id = taxpayer.get("taxpayerId", "") or taxpayer.get("taxPayerID", "")
+        if tin:
+            settings.db_set("tin", tin, update_modified=False)
+        if tp_id:
+            settings.db_set("taxpayer_id", tp_id, update_modified=False)
 
-    result = client.call("T103", payload, encrypt=False)
-
-    token = result.get("token", "")
-    expiry = (datetime.now() + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
-
-    if token:
-        settings.db_set("auth_token", token, update_modified=False)
-        settings.db_set("token_expiry", expiry, update_modified=False)
-        settings.db_set("init_status", "T103 OK — Authenticated", update_modified=False)
-
-    frappe.msgprint("✅ T103: Sign-in successful.", indicator="green")
-    return {"status": "Authenticated", "expiry": expiry}
+    frappe.msgprint("✅ T103: Device / taxpayer info received from EFRIS.", indicator="green")
+    return {"status": "OK", "taxpayer": taxpayer}
 
 
-# ─── T104: Get Symmetric AES Key ──────────────────────────────────────────
+# ─── T104: Get Session AES Key ────────────────────────────────────────────
 
 @frappe.whitelist()
 def get_symmetric_key() -> dict:
     """
-    T104 — Retrieve session AES key.
+    T104 — Mirrors T104.cs response model.
 
-    EFRIS returns the AES key RSA-encrypted with the server public key.
-    We decrypt it using the client private key, then store it.
+    T104.cs fields (from SAP source, note the typo in the original):
+        passowrdDes  — session AES key RSA-encrypted with server public key
+
+    We decrypt with the client private key and write to SessionAESKey.txt.
     """
-    client = EFRISClient()
+    client   = EFRISClient()
     settings = client.settings
 
     private_key_pem = client.key_manager.get_private_key()
@@ -151,28 +157,24 @@ def get_symmetric_key() -> dict:
 
     result = client.call("T104", encrypt=False)
 
-    # Field name varies by EFRIS version: passwordDes or symmKey
-    encrypted_aes_b64 = (result.get("passwordDes")
-                         or result.get("symmKey")
-                         or result.get("symmetricKey", ""))
+    # T104.cs: JsonPropertyName("passowrdDes") — SAP typo, two 'o's
+    encrypted_aes_b64 = result.get("passowrdDes", "") or result.get("passwordDes", "")
     if not encrypted_aes_b64:
         frappe.log_error(
-            f"T104 raw result keys: {list(result.keys())}\nFull: {result}",
+            f"T104 keys: {list(result.keys())}\nFull: {result}",
             "EFRIS T104 Unexpected Response",
         )
         frappe.throw(
             f"T104 returned no AES key.<br>"
-            f"Response keys found: <code>{list(result.keys())}</code><br>"
-            "Check <b>Error Log</b> for the full T104 response."
+            f"Response keys: <code>{list(result.keys())}</code><br>"
+            "Check <b>Error Log</b> for full T104 response."
         )
 
     aes_key_bytes = rsa_decrypt(encrypted_aes_b64, private_key_pem)
-    client.set_aes_key(aes_key_bytes)
-
-    settings.db_set("init_status", "T104 OK — Session key active", update_modified=False)
+    client.set_aes_key(aes_key_bytes)   # writes to SessionAESKey.txt
 
     frappe.msgprint(
-        f"✅ T104: Session AES key obtained ({len(aes_key_bytes) * 8}-bit).",
+        f"✅ T104: Session AES key ({len(aes_key_bytes) * 8}-bit) saved to file.",
         indicator="green",
     )
     return {"status": "AES Key Set", "key_bits": len(aes_key_bytes) * 8}
@@ -183,55 +185,53 @@ def get_symmetric_key() -> dict:
 @frappe.whitelist()
 def full_initialise() -> dict:
     """
-    Run the complete T101 → T102 → T103 → T104 sequence in one click.
-    Matches the SAP B1 'Test Connection' + initialise flow.
+    T101 → T102 → T103 → T104 in one call.
+    Mirrors the SAP B1 'Test Connection' + initialise flow.
     """
     results = {}
 
-    frappe.publish_progress(10, title="EFRIS Init", description="T101 — Testing connection…")
+    frappe.publish_progress(10,  title="EFRIS Init", description="T101 — Testing connection…")
     results["server_time"] = get_server_time()
 
-    frappe.publish_progress(30, title="EFRIS Init", description="T102 — Getting client keys…")
+    frappe.publish_progress(35,  title="EFRIS Init", description="T102 — Getting client keys…")
     results["t102"] = client_init()
 
-    frappe.publish_progress(60, title="EFRIS Init", description="T103 — Signing in…")
+    frappe.publish_progress(65,  title="EFRIS Init", description="T103 — Getting device info…")
     results["t103"] = sign_in()
 
-    frappe.publish_progress(85, title="EFRIS Init", description="T104 — Getting session key…")
+    frappe.publish_progress(90,  title="EFRIS Init", description="T104 — Getting session key…")
     results["t104"] = get_symmetric_key()
 
-    frappe.publish_progress(100, title="EFRIS Init", description="Done")
+    frappe.publish_progress(100, title="EFRIS Init", description="Done ✅")
 
     frappe.msgprint(
-        f"🎉 EFRIS fully initialised!\n"
+        f"🎉 EFRIS initialised!\n"
         f"Server time: {results['server_time']}\n"
-        f"All keys stored. Ready to submit documents.",
+        f"All keys saved to files. Ready to submit documents.",
         indicator="green",
         title="EFRIS Initialised",
     )
     return results
 
 
-# ─── Scheduler: refresh session before expiry ─────────────────────────────
+# ─── Scheduler: refresh session if needed ────────────────────────────────
 
 def refresh_session_if_needed():
-    """Called hourly by the scheduler. Re-authenticates if token near expiry."""
+    """Called hourly. Re-runs T103 + T104 if files are stale (>8 h old)."""
+    import os
+    import time
     try:
         settings = frappe.get_single("EFRIS Settings")
-        if not settings.enabled:
+        if not settings.api_url:
             return
 
-        expiry_str = settings.get("token_expiry")
-        if not expiry_str:
+        path = settings.get("session_key_path")
+        if not path or not os.path.isfile(path):
             return
 
-        if isinstance(expiry_str, str):
-            expiry = datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
-        else:
-            expiry = expiry_str
-
-        if datetime.now() >= expiry - timedelta(minutes=30):
-            frappe.logger("efris").info("EFRIS: refreshing session (token expiring soon).")
+        age_hours = (time.time() - os.path.getmtime(path)) / 3600
+        if age_hours > 7.5:
+            frappe.logger("efris").info("EFRIS: refreshing session (key >7.5h old).")
             sign_in()
             get_symmetric_key()
 

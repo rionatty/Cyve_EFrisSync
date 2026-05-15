@@ -10,7 +10,6 @@
 
   "field_order": [
     "tab_connection",
-
     "api_url",
     "public_key_path",
     "session_key_path",
@@ -22,7 +21,6 @@
     "api_version",
 
     "tab_settings",
-
     "use_t127",
     "gross_on_sales_order",
     "gross_on_delivery",
@@ -40,251 +38,108 @@
     "col_sett3",
     "alcohol_industry",
 
-    "tab_system",
-
-    "efris_password",
-    "col_sys1",
+    "tab_company",
     "tin",
-    "taxpayer_id",
-    "section_keys",
-    "server_public_key",
-    "col_keys",
-    "client_private_key",
-    "session_aes_key",
-    "auth_token",
-    "token_expiry",
-    "init_status"
+    "taxpayer_id"
   ],
 
   "fields": [
 
-    {
-      "fieldname": "tab_connection",
-      "fieldtype": "Tab Break",
-      "label": "Connection"
-    },
+    { "fieldname": "tab_connection", "fieldtype": "Tab Break", "label": "Connection" },
 
     {
       "fieldname": "api_url",
       "fieldtype": "Data",
       "label": "URL",
       "reqd": 1,
-      "in_list_view": 0,
-      "description": "Full EFRIS endpoint — e.g. https://efristest.ura.go.ug/efrisws/ws/taapp/getInformation",
-      "bold": 0
+      "description": "https://efristest.ura.go.ug/efrisws/ws/taapp/getInformation"
     },
     {
       "fieldname": "public_key_path",
       "fieldtype": "Data",
       "label": "EFRIS Public Key Path",
-      "description": "Absolute path to PublicKey.txt on this server"
+      "description": "Absolute server path to PublicKey.txt  (U_OT_EPK)"
     },
     {
       "fieldname": "session_key_path",
       "fieldtype": "Data",
       "label": "Session Key Path",
-      "description": "Absolute path to SessionAESKey.txt on this server"
+      "description": "Absolute server path to SessionAESKey.txt  (U_OT_SAK)"
     },
     {
       "fieldname": "private_key_path",
       "fieldtype": "Data",
       "label": "Private Key Path",
-      "description": "Absolute path to PrivateKey.txt on this server"
+      "description": "Absolute server path to PrivateKey.txt  (U_OT_PK)"
     },
-    {
-      "fieldname": "col_conn",
-      "fieldtype": "Column Break"
-    },
+    { "fieldname": "col_conn", "fieldtype": "Column Break" },
     {
       "fieldname": "device_no",
       "fieldtype": "Data",
       "label": "Device No",
-      "reqd": 1
+      "reqd": 1,
+      "description": "U_OT_DevNo"
     },
     {
       "fieldname": "app_id",
       "fieldtype": "Data",
       "label": "App Id",
-      "reqd": 1
+      "reqd": 1,
+      "description": "U_OT_AppId"
     },
     {
       "fieldname": "efris_username",
       "fieldtype": "Data",
       "label": "User Name",
-      "reqd": 1
+      "reqd": 1,
+      "description": "U_OT_UserName"
     },
     {
       "fieldname": "api_version",
       "fieldtype": "Data",
       "label": "Version",
-      "default": "1.1.20191201"
+      "default": "1.1.20191201",
+      "description": "U_OT_Version"
     },
 
+    { "fieldname": "tab_settings", "fieldtype": "Tab Break", "label": "Settings" },
+
+    { "fieldname": "use_t127",            "fieldtype": "Check", "label": "USE T127  On AR Invoice",   "description": "U_OT_UseT127" },
+    { "fieldname": "gross_on_sales_order","fieldtype": "Check", "label": "Gross On Sales Order",      "description": "U_OT_GrosTot" },
+    { "fieldname": "gross_on_delivery",   "fieldtype": "Check", "label": "Gross On Delivery",         "description": "U_OT_GrosDL"  },
+    { "fieldname": "gross_on_ar_invoice", "fieldtype": "Check", "label": "Gross On AR Invoice",       "default": "1", "description": "U_OT_GrosAR"  },
+    { "fieldname": "col_sett1", "fieldtype": "Column Break" },
+    { "fieldname": "beverage_industry",   "fieldtype": "Check", "label": "Beverage Industry",         "description": "U_OT_BEVIND"  },
+    { "fieldname": "price_on_sales_order","fieldtype": "Check", "label": "Price On Sales Order",      "description": "U_OT_UPrcSO"  },
+    { "fieldname": "price_on_delivery",   "fieldtype": "Check", "label": "Price On Delivery",         "default": "1", "description": "U_OT_UPrcDL"  },
+    { "fieldname": "price_on_ar_invoice", "fieldtype": "Check", "label": "Price On AR Invoice",       "default": "1", "description": "U_OT_UPrcAR"  },
+    { "fieldname": "col_sett2", "fieldtype": "Column Break" },
+    { "fieldname": "multi_branch",        "fieldtype": "Check", "label": "Enable Multi-Branch",       "description": "U_OT_MULTIBRNCH" },
+    { "fieldname": "stock_transfer",      "fieldtype": "Check", "label": "Stock Transfer",            "description": "U_OT_CSTCTSF"   },
+    { "fieldname": "issue_from_production",   "fieldtype": "Check", "label": "Issue From Production",   "description": "U_OT_IFP" },
+    { "fieldname": "receipt_from_production", "fieldtype": "Check", "label": "Receipt From Production", "description": "U_OT_RFP" },
+    { "fieldname": "col_sett3", "fieldtype": "Column Break" },
+    { "fieldname": "alcohol_industry",    "fieldtype": "Check", "label": "Alcohol Industry",          "description": "U_OT_ALCOHOL" },
+
     {
-      "fieldname": "tab_settings",
+      "fieldname": "tab_company",
       "fieldtype": "Tab Break",
-      "label": "Settings"
-    },
-
-    {
-      "fieldname": "use_t127",
-      "fieldtype": "Check",
-      "label": "USE T127  On AR Invoice"
-    },
-    {
-      "fieldname": "gross_on_sales_order",
-      "fieldtype": "Check",
-      "label": "Gross On Sales Order"
-    },
-    {
-      "fieldname": "gross_on_delivery",
-      "fieldtype": "Check",
-      "label": "Gross On Delivery"
-    },
-    {
-      "fieldname": "gross_on_ar_invoice",
-      "fieldtype": "Check",
-      "label": "Gross On AR Invoice",
-      "default": "1"
-    },
-    {
-      "fieldname": "col_sett1",
-      "fieldtype": "Column Break"
-    },
-    {
-      "fieldname": "beverage_industry",
-      "fieldtype": "Check",
-      "label": "Beverage Industry"
-    },
-    {
-      "fieldname": "price_on_sales_order",
-      "fieldtype": "Check",
-      "label": "Price On Sales Order"
-    },
-    {
-      "fieldname": "price_on_delivery",
-      "fieldtype": "Check",
-      "label": "Price On Delivery",
-      "default": "1"
-    },
-    {
-      "fieldname": "price_on_ar_invoice",
-      "fieldtype": "Check",
-      "label": "Price On AR Invoice",
-      "default": "1"
-    },
-    {
-      "fieldname": "col_sett2",
-      "fieldtype": "Column Break"
-    },
-    {
-      "fieldname": "multi_branch",
-      "fieldtype": "Check",
-      "label": "Enable Multi-Branch"
-    },
-    {
-      "fieldname": "stock_transfer",
-      "fieldtype": "Check",
-      "label": "Stock Transfer"
-    },
-    {
-      "fieldname": "issue_from_production",
-      "fieldtype": "Check",
-      "label": "Issue From Production"
-    },
-    {
-      "fieldname": "receipt_from_production",
-      "fieldtype": "Check",
-      "label": "Receipt From Production"
-    },
-    {
-      "fieldname": "col_sett3",
-      "fieldtype": "Column Break"
-    },
-    {
-      "fieldname": "alcohol_industry",
-      "fieldtype": "Check",
-      "label": "Alcohol Industry"
-    },
-
-    {
-      "fieldname": "tab_system",
-      "fieldtype": "Tab Break",
-      "label": "System / Keys",
-      "description": "Internal fields written by the initialisation sequence. Do not edit manually."
-    },
-
-    {
-      "fieldname": "efris_password",
-      "fieldtype": "Password",
-      "label": "Password",
-      "description": "EFRIS portal password for the User Name above (used in T103 Sign-In)"
-    },
-    {
-      "fieldname": "col_sys1",
-      "fieldtype": "Column Break"
+      "label": "Company Info",
+      "description": "In SAP B1 these are read from OADM (company master). Enter them here once."
     },
     {
       "fieldname": "tin",
       "fieldtype": "Data",
       "label": "TIN",
-      "description": "Uganda Revenue Authority TIN — auto-read from Company in SAP; enter here in ERPNext"
+      "reqd": 1,
+      "description": "Uganda Revenue Authority TIN  (OADM.DdctOffice)"
     },
     {
       "fieldname": "taxpayer_id",
       "fieldtype": "Data",
-      "label": "Taxpayer ID"
-    },
-
-    {
-      "fieldname": "section_keys",
-      "fieldtype": "Section Break",
-      "label": "Key Storage (auto-managed)",
-      "collapsible": 1,
-      "collapsed": 1
-    },
-    {
-      "fieldname": "server_public_key",
-      "fieldtype": "Small Text",
-      "label": "Server Public Key",
-      "read_only": 1,
-      "description": "Written by T102. Read-only."
-    },
-    {
-      "fieldname": "col_keys",
-      "fieldtype": "Column Break"
-    },
-    {
-      "fieldname": "client_private_key",
-      "fieldtype": "Password",
-      "label": "Client Private Key",
-      "read_only": 1,
-      "description": "Written by T102. Read-only."
-    },
-    {
-      "fieldname": "session_aes_key",
-      "fieldtype": "Password",
-      "label": "Session AES Key (base64)",
-      "read_only": 1,
-      "description": "Written by T104. Read-only."
-    },
-    {
-      "fieldname": "auth_token",
-      "fieldtype": "Data",
-      "label": "Auth Token",
-      "read_only": 1
-    },
-    {
-      "fieldname": "token_expiry",
-      "fieldtype": "Datetime",
-      "label": "Token Expiry",
-      "read_only": 1
-    },
-    {
-      "fieldname": "init_status",
-      "fieldtype": "Data",
-      "label": "Init Status",
-      "read_only": 1
+      "label": "Taxpayer ID",
+      "reqd": 1,
+      "description": "EFRIS Taxpayer ID  (OADM.TaxIdNum2)"
     }
   ],
 
