@@ -65,4 +65,5 @@ after_migrate  = "efris_integration.setup.install.after_install"
 fixtures = [
     {"dt": "Custom Field",    "filters": [["module", "=", "EFRIS Integration"]]},
     {"dt": "Property Setter", "filters": [["module", "=", "EFRIS Integration"]]},
+    {"dt": "Workspace",       "filters": [["name", "=", "EFRIS Integration"]]},
 ]

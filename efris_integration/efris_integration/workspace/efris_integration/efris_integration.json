@@ -1,0 +1,113 @@
+{
+  "charts": [],
+  "content": "[{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Configuration</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Settings\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS UOM Mapping\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Tax Mapping\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Invoicing</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Order\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Delivery Note\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Stock Movements</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Receipt\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Entry\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Reconciliation\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Bulk Submission\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Submission Log\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Log\",\"col\":3}}]",
+  "doctype": "Workspace",
+  "hide_custom": 0,
+  "is_hidden": 0,
+  "label": "EFRIS Integration",
+  "module": "EFRIS Integration",
+  "name": "EFRIS Integration",
+  "onboarding": "",
+  "parent_page": "Accounting",
+  "public": 1,
+  "restrict_to_domain": "",
+  "roles": [],
+  "sequence_id": 99.0,
+  "shortcuts": [
+    {
+      "color": "Blue",
+      "doc_view": "",
+      "doctype": "EFRIS Settings",
+      "label": "EFRIS Settings",
+      "link_to": "EFRIS Settings",
+      "type": "DocType"
+    },
+    {
+      "color": "Blue",
+      "doc_view": "",
+      "doctype": "EFRIS UOM Mapping",
+      "label": "EFRIS UOM Mapping",
+      "link_to": "EFRIS UOM Mapping",
+      "type": "DocType"
+    },
+    {
+      "color": "Blue",
+      "doc_view": "",
+      "doctype": "EFRIS Tax Mapping",
+      "label": "EFRIS Tax Mapping",
+      "link_to": "EFRIS Tax Mapping",
+      "type": "DocType"
+    },
+    {
+      "color": "Grey",
+      "doc_view": "List",
+      "doctype": "Sales Invoice",
+      "label": "Sales Invoice",
+      "link_to": "Sales Invoice",
+      "type": "DocType"
+    },
+    {
+      "color": "Grey",
+      "doc_view": "List",
+      "doctype": "Sales Order",
+      "label": "Sales Order",
+      "link_to": "Sales Order",
+      "type": "DocType"
+    },
+    {
+      "color": "Grey",
+      "doc_view": "List",
+      "doctype": "Delivery Note",
+      "label": "Delivery Note",
+      "link_to": "Delivery Note",
+      "type": "DocType"
+    },
+    {
+      "color": "Grey",
+      "doc_view": "List",
+      "doctype": "Purchase Receipt",
+      "label": "Purchase Receipt",
+      "link_to": "Purchase Receipt",
+      "type": "DocType"
+    },
+    {
+      "color": "Grey",
+      "doc_view": "List",
+      "doctype": "Stock Entry",
+      "label": "Stock Entry",
+      "link_to": "Stock Entry",
+      "type": "DocType"
+    },
+    {
+      "color": "Grey",
+      "doc_view": "List",
+      "doctype": "Stock Reconciliation",
+      "label": "Stock Reconciliation",
+      "link_to": "Stock Reconciliation",
+      "type": "DocType"
+    },
+    {
+      "color": "Green",
+      "doc_view": "",
+      "label": "EFRIS Bulk Submission",
+      "link_to": "EFRIS Bulk Submission",
+      "type": "Report"
+    },
+    {
+      "color": "Green",
+      "doc_view": "",
+      "label": "EFRIS Submission Log",
+      "link_to": "EFRIS Submission Log",
+      "type": "Report"
+    },
+    {
+      "color": "Green",
+      "doc_view": "List",
+      "doctype": "EFRIS Log",
+      "label": "EFRIS Log",
+      "link_to": "EFRIS Log",
+      "type": "DocType"
+    }
+  ],
+  "title": "EFRIS Integration"
+}
