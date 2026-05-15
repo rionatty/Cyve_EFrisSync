@@ -62,8 +62,11 @@ def client_init() -> dict:
 
     result = client.call("T102", encrypt=False)
 
-    server_pub_key     = result.get("serverPublicKey", "")
-    encrypted_priv_key = result.get("clientPrivateKey", "")
+    # EFRIS uses abbreviated field names: serverPubKey / clientPriKey
+    server_pub_key     = (result.get("serverPubKey")
+                          or result.get("serverPublicKey", ""))
+    encrypted_priv_key = (result.get("clientPriKey")
+                          or result.get("clientPrivateKey", ""))
 
     if not server_pub_key or not encrypted_priv_key:
         # Log the full result so we can see what field names EFRIS actually used
@@ -148,9 +151,20 @@ def get_symmetric_key() -> dict:
 
     result = client.call("T104", encrypt=False)
 
-    encrypted_aes_b64 = result.get("passwordDes", "")
+    # Field name varies by EFRIS version: passwordDes or symmKey
+    encrypted_aes_b64 = (result.get("passwordDes")
+                         or result.get("symmKey")
+                         or result.get("symmetricKey", ""))
     if not encrypted_aes_b64:
-        frappe.throw("T104 returned no AES key (passwordDes empty).")
+        frappe.log_error(
+            f"T104 raw result keys: {list(result.keys())}\nFull: {result}",
+            "EFRIS T104 Unexpected Response",
+        )
+        frappe.throw(
+            f"T104 returned no AES key.<br>"
+            f"Response keys found: <code>{list(result.keys())}</code><br>"
+            "Check <b>Error Log</b> for the full T104 response."
+        )
 
     aes_key_bytes = rsa_decrypt(encrypted_aes_b64, private_key_pem)
     client.set_aes_key(aes_key_bytes)
