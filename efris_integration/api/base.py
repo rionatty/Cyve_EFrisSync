@@ -105,7 +105,20 @@ class EFRISClient:
         encrypt_code = str(desc.get("encryptCode", "0"))
 
         if encrypt_code == "2":
-            return decode_response_data(resp_data, self._get_aes_key())
+            try:
+                return decode_response_data(resp_data, self._get_aes_key())
+            except (ValueError, Exception) as exc:
+                if "padding" in str(exc).lower() or "incorrect" in str(exc).lower():
+                    frappe.throw(
+                        "⚠️ EFRIS session key is stale or invalid — "
+                        "AES decryption of the server response failed.<br><br>"
+                        "The key stored in your key file no longer matches the active "
+                        "EFRIS server session.<br><br>"
+                        "<b>Fix:</b> Go to <b>EFRIS Settings → Connection → "
+                        "🔑 Full Initialise (T101 → T104)</b> to obtain a fresh session key.",
+                        title="Session Key Expired",
+                    )
+                frappe.throw(f"EFRIS response decryption failed: {exc}")
 
         # Unencrypted / plain JSON string in content
         if isinstance(content, str) and content.strip().startswith("{"):
