@@ -26,8 +26,11 @@ import frappe
 
 from efris_integration.api.base import EFRISClient, EFRISAPIError
 
-# EFRIS error codes that indicate a stale / expired session key
-_SESSION_EXPIRED_CODES = {"15", "16", "99", "03"}
+# EFRIS error codes that mean stale session / bad key — trigger auto-refresh
+# 15 = Data decryption error (stale AES key)
+# 39 = Signature value can not be empty (private key missing or unreadable)
+# 16/99/03 = generic session / auth failures
+_SESSION_EXPIRED_CODES = {"15", "16", "39", "99", "03"}
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
@@ -135,7 +138,7 @@ def _call_t126(client: EFRISClient, payload: dict,
             "T126",
             payload=payload,
             encrypt=True,
-            sign=False,          # SAP B1 does NOT sign T126 requests
+            sign=True,           # EFRIS requires signature — error [39] if absent
             doc_type="Currency Exchange",
             doc_name="",
         )
