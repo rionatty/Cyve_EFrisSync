@@ -1,0 +1,21 @@
+{
+  "actions": [],
+  "allow_rename": 1,
+  "autoname": "Prompt",
+  "creation": "2024-01-01 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": ["erpnext_uom", "efris_uom_code", "efris_uom_name"],
+  "fields": [
+    {"fieldname": "erpnext_uom", "fieldtype": "Link", "label": "ERPNext UOM", "options": "UOM", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "efris_uom_code", "fieldtype": "Data", "label": "EFRIS UOM Code", "reqd": 1, "in_list_view": 1, "description": "e.g. 101=Piece, 102=Kg, 103=Litre, 104=Metre"},
+    {"fieldname": "efris_uom_name", "fieldtype": "Data", "label": "EFRIS UOM Name", "in_list_view": 1}
+  ],
+  "module": "EFRIS Integration",
+  "name": "EFRIS UOM Mapping",
+  "permissions": [
+    {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1}
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC"
+}

@@ -1,0 +1,400 @@
+{
+  "actions": [],
+  "allow_rename": 0,
+  "autoname": "Prompt",
+  "creation": "2024-01-01 00:00:00.000000",
+  "doctype": "DocType",
+  "editable_grid": 0,
+  "engine": "InnoDB",
+
+  "field_order": [
+    "enabled",
+
+    "section_connection",
+    "api_url",
+    "column_break_conn",
+    "efris_username",
+    "efris_password",
+
+    "section_key_paths",
+    "public_key_path",
+    "session_key_path",
+    "private_key_path",
+
+    "section_device",
+    "device_no",
+    "app_id",
+    "column_break_dev",
+    "api_version",
+    "industry_code",
+
+    "section_company",
+    "tin",
+    "taxpayer_id",
+    "legal_name",
+    "company_name",
+    "column_break_co",
+    "address",
+    "phone",
+    "email",
+    "branch_id",
+    "branch_name",
+    "branch_code",
+
+    "section_keys_db",
+    "server_public_key",
+    "client_private_key",
+    "session_aes_key",
+    "auth_token",
+    "token_expiry",
+    "init_status",
+
+    "section_settings",
+    "html_settings_header",
+
+    "section_excise_doc",
+    "use_t127",
+    "gross_on_sales_order",
+    "gross_on_delivery",
+    "gross_on_ar_invoice",
+    "column_break_exc",
+    "price_on_sales_order",
+    "price_on_delivery",
+    "price_on_ar_invoice",
+
+    "section_industry_flags",
+    "beverage_industry",
+    "alcohol_industry",
+    "column_break_ind",
+    "multi_branch",
+    "stock_transfer",
+    "issue_from_production",
+    "receipt_from_production",
+
+    "section_auto_submit",
+    "auto_submit_sales_invoice",
+    "auto_submit_credit_notes",
+    "auto_submit_sales_order",
+    "auto_submit_delivery_note",
+    "column_break_as",
+    "auto_submit_purchase_receipt",
+    "auto_submit_stock_receipt",
+    "auto_submit_stock_issue",
+    "auto_submit_manufacture",
+    "auto_submit_stock_reconciliation"
+  ],
+
+  "fields": [
+
+    {"fieldname": "enabled",
+     "fieldtype": "Check",
+     "label": "Enable EFRIS Integration",
+     "default": "1"},
+
+    {"fieldname": "section_connection",
+     "fieldtype": "Section Break",
+     "label": "Connection",
+     "description": "EFRIS API endpoint and credentials"},
+
+    {"fieldname": "api_url",
+     "fieldtype": "Data",
+     "label": "URL",
+     "reqd": 1,
+     "default": "https://efristest.ura.go.ug/efrisws/ws/taapp/getInformation",
+     "description": "Full EFRIS endpoint — e.g. https://efristest.ura.go.ug/efrisws/ws/taapp/getInformation"},
+
+    {"fieldname": "column_break_conn",
+     "fieldtype": "Column Break"},
+
+    {"fieldname": "efris_username",
+     "fieldtype": "Data",
+     "label": "User Name",
+     "reqd": 1},
+
+    {"fieldname": "efris_password",
+     "fieldtype": "Password",
+     "label": "Password"},
+
+    {"fieldname": "section_key_paths",
+     "fieldtype": "Section Break",
+     "label": "Key File Paths",
+     "description": "Absolute paths to the RSA/AES key files on the server. Keys are read from and written to these files."},
+
+    {"fieldname": "public_key_path",
+     "fieldtype": "Data",
+     "label": "EFRIS Public Key Path",
+     "description": "e.g. /home/frappe/efris_keys/PublicKey.txt"},
+
+    {"fieldname": "session_key_path",
+     "fieldtype": "Data",
+     "label": "Session Key Path",
+     "description": "e.g. /home/frappe/efris_keys/SessionAESKey.txt"},
+
+    {"fieldname": "private_key_path",
+     "fieldtype": "Data",
+     "label": "Private Key Path",
+     "description": "e.g. /home/frappe/efris_keys/PrivateKey.txt"},
+
+    {"fieldname": "section_device",
+     "fieldtype": "Section Break",
+     "label": "Device & App"},
+
+    {"fieldname": "device_no",
+     "fieldtype": "Data",
+     "label": "Device No",
+     "reqd": 1},
+
+    {"fieldname": "app_id",
+     "fieldtype": "Data",
+     "label": "App Id",
+     "reqd": 1},
+
+    {"fieldname": "column_break_dev",
+     "fieldtype": "Column Break"},
+
+    {"fieldname": "api_version",
+     "fieldtype": "Data",
+     "label": "Version",
+     "default": "1.1.20191201"},
+
+    {"fieldname": "industry_code",
+     "fieldtype": "Select",
+     "label": "Industry Code",
+     "options": "101\n102\n103\n104",
+     "default": "101",
+     "description": "101=General, 102=Beverage, 103=Tobacco, 104=Fuel"},
+
+    {"fieldname": "section_company",
+     "fieldtype": "Section Break",
+     "label": "Company / Taxpayer Info"},
+
+    {"fieldname": "tin",
+     "fieldtype": "Data",
+     "label": "TIN",
+     "reqd": 1},
+
+    {"fieldname": "taxpayer_id",
+     "fieldtype": "Data",
+     "label": "Taxpayer ID",
+     "reqd": 1},
+
+    {"fieldname": "legal_name",
+     "fieldtype": "Data",
+     "label": "Legal Name"},
+
+    {"fieldname": "company_name",
+     "fieldtype": "Data",
+     "label": "Business Name"},
+
+    {"fieldname": "column_break_co",
+     "fieldtype": "Column Break"},
+
+    {"fieldname": "address",
+     "fieldtype": "Small Text",
+     "label": "Address"},
+
+    {"fieldname": "phone",
+     "fieldtype": "Data",
+     "label": "Phone"},
+
+    {"fieldname": "email",
+     "fieldtype": "Data",
+     "label": "Email"},
+
+    {"fieldname": "branch_id",
+     "fieldtype": "Data",
+     "label": "Branch ID"},
+
+    {"fieldname": "branch_name",
+     "fieldtype": "Data",
+     "label": "Branch Name"},
+
+    {"fieldname": "branch_code",
+     "fieldtype": "Data",
+     "label": "Branch Code"},
+
+    {"fieldname": "section_keys_db",
+     "fieldtype": "Section Break",
+     "label": "Stored Keys & Session",
+     "collapsible": 1,
+     "description": "Auto-populated by the init sequence. Do not edit manually."},
+
+    {"fieldname": "server_public_key",
+     "fieldtype": "Long Text",
+     "label": "Server Public Key (RSA)",
+     "read_only": 1},
+
+    {"fieldname": "client_private_key",
+     "fieldtype": "Password",
+     "label": "Client Private Key (RSA)",
+     "read_only": 1},
+
+    {"fieldname": "session_aes_key",
+     "fieldtype": "Password",
+     "label": "Session AES Key (Base64)",
+     "read_only": 1},
+
+    {"fieldname": "auth_token",
+     "fieldtype": "Small Text",
+     "label": "Auth Token",
+     "read_only": 1},
+
+    {"fieldname": "token_expiry",
+     "fieldtype": "Datetime",
+     "label": "Token Expiry",
+     "read_only": 1},
+
+    {"fieldname": "init_status",
+     "fieldtype": "Data",
+     "label": "Initialisation Status",
+     "read_only": 1},
+
+    {"fieldname": "section_settings",
+     "fieldtype": "Section Break",
+     "label": "Settings"},
+
+    {"fieldname": "html_settings_header",
+     "fieldtype": "HTML",
+     "label": "",
+     "options": "<div class='efris-settings-hint text-muted small'>Configure excise duty calculation mode and document submission options below.</div>"},
+
+    {"fieldname": "section_excise_doc",
+     "fieldtype": "Section Break",
+     "label": "Excise Duty Calculation &amp; Document Submission"},
+
+    {"fieldname": "use_t127",
+     "fieldtype": "Check",
+     "label": "USE T127  –  On AR Invoice",
+     "description": "Call T127 (Industry Config) before each AR Invoice submission to get current excise rates"},
+
+    {"fieldname": "gross_on_sales_order",
+     "fieldtype": "Check",
+     "label": "Gross On Sales Order",
+     "description": "Report VAT-inclusive (gross) unit prices on Sales Orders"},
+
+    {"fieldname": "gross_on_delivery",
+     "fieldtype": "Check",
+     "label": "Gross On Delivery",
+     "description": "Report VAT-inclusive (gross) unit prices on Delivery Notes"},
+
+    {"fieldname": "gross_on_ar_invoice",
+     "fieldtype": "Check",
+     "label": "Gross On AR Invoice",
+     "default": "1",
+     "description": "Report VAT-inclusive (gross) unit prices on AR Invoices"},
+
+    {"fieldname": "column_break_exc",
+     "fieldtype": "Column Break"},
+
+    {"fieldname": "price_on_sales_order",
+     "fieldtype": "Check",
+     "label": "Price On Sales Order",
+     "description": "Include unit price in the EFRIS goods details for Sales Orders"},
+
+    {"fieldname": "price_on_delivery",
+     "fieldtype": "Check",
+     "label": "Price On Delivery",
+     "default": "1",
+     "description": "Include unit price in the EFRIS goods details for Delivery Notes"},
+
+    {"fieldname": "price_on_ar_invoice",
+     "fieldtype": "Check",
+     "label": "Price On AR Invoice",
+     "default": "1",
+     "description": "Include unit price in the EFRIS goods details for AR Invoices"},
+
+    {"fieldname": "section_industry_flags",
+     "fieldtype": "Section Break",
+     "label": "Industry &amp; Module Flags"},
+
+    {"fieldname": "beverage_industry",
+     "fieldtype": "Check",
+     "label": "Beverage Industry",
+     "description": "Excise = Rate × Volume (litres) × USD/UGX rate"},
+
+    {"fieldname": "alcohol_industry",
+     "fieldtype": "Check",
+     "label": "Alcohol Industry",
+     "description": "Excise = max(Rate% × value, USD/unit × FX rate)"},
+
+    {"fieldname": "column_break_ind",
+     "fieldtype": "Column Break"},
+
+    {"fieldname": "multi_branch",
+     "fieldtype": "Check",
+     "label": "Enable Multi-Branch",
+     "description": "Propagate branch IDs to EFRIS submissions"},
+
+    {"fieldname": "stock_transfer",
+     "fieldtype": "Check",
+     "label": "Stock Transfer",
+     "description": "Submit inter-branch stock transfers (T115 + T114) to EFRIS"},
+
+    {"fieldname": "issue_from_production",
+     "fieldtype": "Check",
+     "label": "Issue From Production",
+     "description": "Submit raw material consumption from Work Orders to EFRIS (T115)"},
+
+    {"fieldname": "receipt_from_production",
+     "fieldtype": "Check",
+     "label": "Receipt From Production",
+     "description": "Submit finished goods received from Work Orders to EFRIS (T114 option 103)"},
+
+    {"fieldname": "section_auto_submit",
+     "fieldtype": "Section Break",
+     "label": "Auto-Submit on Document Submit"},
+
+    {"fieldname": "auto_submit_sales_invoice",
+     "fieldtype": "Check",
+     "label": "Auto-Submit Sales Invoice",
+     "default": "1"},
+
+    {"fieldname": "auto_submit_credit_notes",
+     "fieldtype": "Check",
+     "label": "Auto-Submit Credit Notes",
+     "default": "1"},
+
+    {"fieldname": "auto_submit_sales_order",
+     "fieldtype": "Check",
+     "label": "Auto-Submit Sales Order"},
+
+    {"fieldname": "auto_submit_delivery_note",
+     "fieldtype": "Check",
+     "label": "Auto-Submit Delivery Note"},
+
+    {"fieldname": "column_break_as",
+     "fieldtype": "Column Break"},
+
+    {"fieldname": "auto_submit_purchase_receipt",
+     "fieldtype": "Check",
+     "label": "Auto-Submit Purchase Receipt",
+     "default": "1"},
+
+    {"fieldname": "auto_submit_stock_receipt",
+     "fieldtype": "Check",
+     "label": "Auto-Submit Stock Receipt (Material Receipt)"},
+
+    {"fieldname": "auto_submit_stock_issue",
+     "fieldtype": "Check",
+     "label": "Auto-Submit Stock Issue (Material Issue)"},
+
+    {"fieldname": "auto_submit_manufacture",
+     "fieldtype": "Check",
+     "label": "Auto-Submit Manufacture Entries"},
+
+    {"fieldname": "auto_submit_stock_reconciliation",
+     "fieldtype": "Check",
+     "label": "Auto-Submit Stock Reconciliation (Opening Stock)"}
+  ],
+
+  "is_single": 1,
+  "issingle": 1,
+  "module": "EFRIS Integration",
+  "name": "EFRIS Settings",
+  "permissions": [
+    {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 0}
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "title_field": ""
+}

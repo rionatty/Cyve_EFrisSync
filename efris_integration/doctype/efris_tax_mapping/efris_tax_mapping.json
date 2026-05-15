@@ -1,0 +1,21 @@
+{
+  "actions": [],
+  "allow_rename": 1,
+  "autoname": "Prompt",
+  "creation": "2024-01-01 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": ["erpnext_tax", "efris_tax_code", "description"],
+  "fields": [
+    {"fieldname": "erpnext_tax", "fieldtype": "Link", "label": "ERPNext Tax Account", "options": "Account", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "efris_tax_code", "fieldtype": "Select", "label": "EFRIS Tax Code", "options": "101\n102\n103", "reqd": 1, "in_list_view": 1, "description": "101=Standard 18%, 102=Zero Rate, 103=Exempt"},
+    {"fieldname": "description", "fieldtype": "Small Text", "label": "Description"}
+  ],
+  "module": "EFRIS Integration",
+  "name": "EFRIS Tax Mapping",
+  "permissions": [
+    {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1}
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC"
+}
