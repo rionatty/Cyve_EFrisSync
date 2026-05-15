@@ -101,6 +101,8 @@ def _fetch_rates(client: EFRISClient) -> list:
             frappe.logger("efris").info(
                 f"T126 [{exc.code}] — refreshing session (T103+T104) and retrying."
             )
+            # Let T104 errors (e.g. private key not configured) propagate
+            # directly so the user sees the real cause, not SESSION_EXPIRED.
             _refresh_session(client)
             try:
                 result = _call_t126(client)
@@ -110,8 +112,7 @@ def _fetch_rates(client: EFRISClient) -> list:
                     "EFRIS Exchange Rate Error",
                 )
                 frappe.throw(
-                    f"❌ T126 failed after session refresh: [{exc2.code}] {exc2.message}<br>"
-                    "Check EFRIS Settings — API URL, TaxpayerID, and key file paths.",
+                    f"❌ T126 still failing after session refresh: [{exc2.code}] {exc2.message}",
                     title="Exchange Rate Error",
                 )
         else:
