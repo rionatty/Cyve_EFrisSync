@@ -23,21 +23,28 @@ frappe.ui.form.on("Stock Entry", {
 
         if (frm.doc.docstatus !== 1) return;
         if (frm.doc.efris_invoice_id) {
-            // Already submitted; only show log
+            // Already submitted via T114/T115; only show log
             frm.add_custom_button(__("EFRIS Log"), () => efris_open_log(frm), __("EFRIS"));
             return;
         }
 
         const t = frm.doc.stock_entry_type;
 
-        // ── T114 types ───────────────────────────────────────────────────
+        // ── T131 — Goods Stock Maintain (inventory management) ───────────────
+        // Available on every submitted Stock Entry so the user can register or
+        // adjust EFRIS inventory independently of the sales/purchase invoice flow.
+        frm.add_custom_button(__("Submit Stock In (T131)"), () => {
+            efris_t131_dialog(frm);
+        }, __("EFRIS"));
+
+        // ── T114 types ───────────────────────────────────────────────────────
         if (t === "Material Receipt") {
             frm.add_custom_button(__("Submit to EFRIS (T114 – Stock In)"), () => {
                 efris_stock_entry_dialog(frm, "receipt");
             }, __("EFRIS"));
         }
 
-        // ── T115 types ───────────────────────────────────────────────────
+        // ── T115 types ───────────────────────────────────────────────────────
         if (["Material Issue", "Send to Subcontractor"].includes(t)) {
             frm.add_custom_button(__("Submit to EFRIS (T115 – Stock Out)"), () => {
                 efris_confirm_and_call(frm, __("Submit Goods Issue to EFRIS"), () => {
@@ -49,7 +56,7 @@ frappe.ui.form.on("Stock Entry", {
             }, __("EFRIS"));
         }
 
-        // ── Issue From Production ────────────────────────────────────────
+        // ── Issue From Production ─────────────────────────────────────────────
         if (t === "Material Transfer for Manufacture") {
             frm.add_custom_button(__("Submit to EFRIS (T115 – Issue From Production)"), () => {
                 efris_confirm_and_call(frm, __("Submit Issue From Production to EFRIS"), () => {
@@ -61,7 +68,7 @@ frappe.ui.form.on("Stock Entry", {
             }, __("EFRIS"));
         }
 
-        // ── Receipt From Production (Manufacture) ────────────────────────
+        // ── Receipt From Production (Manufacture) ─────────────────────────────
         if (t === "Manufacture") {
             frm.add_custom_button(__("Submit to EFRIS (T114 – Receipt From Production)"), () => {
                 efris_confirm_and_call(frm, __("Submit Receipt From Production to EFRIS"), () => {
@@ -73,7 +80,7 @@ frappe.ui.form.on("Stock Entry", {
             }, __("EFRIS"));
         }
 
-        // ── Goods Return ─────────────────────────────────────────────────
+        // ── Goods Return ──────────────────────────────────────────────────────
         if (frm.doc.add_to_transit === 0 && t === "Material Issue"
                 && frm.doc.efris_return_against_invoice_id) {
             frm.add_custom_button(__("Submit Return to EFRIS (T119)"), () => {
@@ -81,7 +88,7 @@ frappe.ui.form.on("Stock Entry", {
             }, __("EFRIS"));
         }
 
-        // ── Inter-Branch Transfer ────────────────────────────────────
+        // ── Inter-Branch Transfer ─────────────────────────────────────────────
         if (t === "Material Transfer") {
             frm.add_custom_button(__("Submit Inter-Branch Transfer to EFRIS"), () => {
                 efris_confirm_and_call(frm, __("Submit Inter-Branch Transfer to EFRIS"), () => {
@@ -99,6 +106,76 @@ frappe.ui.form.on("Stock Entry", {
 
 
 // ─── Dialogs ──────────────────────────────────────────────────────────────
+
+/**
+ * T131 — Goods Stock Maintain dialog.
+ *
+ * Collects the four URA tab fields, saves them to the Stock Entry, then calls
+ * efris_integration.api.stock_in.upload_stock_in.
+ *
+ * On success URA writes the response back into the Remark field on the form.
+ */
+function efris_t131_dialog(frm) {
+    const d = new frappe.ui.Dialog({
+        title: __("EFRIS Stock In — T131 (Goods Stock Maintain)"),
+        fields: [
+            {
+                label: __("Stock In Type"),
+                fieldname: "efris_stock_in_type",
+                fieldtype: "Select",
+                options: [
+                    { value: "Import",                 label: __("Import") },
+                    { value: "Local Purchase",          label: __("Local Purchase") },
+                    { value: "Manufacture/Assembling",  label: __("Manufacture/Assembling") },
+                    { value: "Opening Stock",           label: __("Opening Stock") },
+                ],
+                default: frm.doc.efris_stock_in_type || "Local Purchase",
+                reqd: 1,
+            },
+            {
+                label: __("Supplier Name"),
+                fieldname: "efris_supplier_name",
+                fieldtype: "Data",
+                default: frm.doc.efris_supplier_name || "",
+                description: __("Required unless Stock In Type is Manufacture/Assembling"),
+            },
+            {
+                label: __("Supplier TIN (EFRIS)"),
+                fieldname: "efris_supplier_tin",
+                fieldtype: "Data",
+                default: frm.doc.efris_supplier_tin || "",
+            },
+            {
+                label: __("Reference No"),
+                fieldname: "efris_reference_no",
+                fieldtype: "Data",
+                default: frm.doc.efris_reference_no || frm.doc.name,
+                description: __("Invoice / PO number sent to URA (max 20 chars)"),
+            },
+        ],
+        primary_action_label: __("Submit to EFRIS (T131)"),
+        primary_action(values) {
+            d.hide();
+            // Save fields to the Stock Entry first, then call the API
+            frappe.db.set_value("Stock Entry", frm.doc.name, {
+                efris_stock_in_type:  values.efris_stock_in_type,
+                efris_supplier_name:  values.efris_supplier_name,
+                efris_supplier_tin:   values.efris_supplier_tin,
+                efris_reference_no:   values.efris_reference_no,
+            }).then(() => {
+                efris_call(frm,
+                    "efris_integration.api.stock_in.upload_stock_in",
+                    {
+                        stock_entry_name: frm.doc.name,
+                        company:          frm.doc.company,
+                    }
+                );
+            });
+        },
+    });
+    d.show();
+}
+
 
 function efris_stock_entry_dialog(frm, mode) {
     const stockInOptions = [

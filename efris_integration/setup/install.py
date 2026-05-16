@@ -78,23 +78,64 @@ CUSTOM_FIELDS = {
     ],
 
     # ─── Stock Entry ──────────────────────────────────────────────────────
+    # Tab "URA" groups all EFRIS fields: T131 Stock-In inputs, URA response,
+    # and the T114/T115/T119 status fields.  The old Section Break is replaced
+    # by a Tab Break so users see a clean "URA" tab on the Stock Entry form.
     "Stock Entry": [
-        {"fieldname": "efris_section", "fieldtype": "Section Break", "label": "EFRIS / URA", "insert_after": "remarks", "collapsible": 1, "module": "EFRIS Integration"},
-        {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "EFRIS Invoice ID", "read_only": 1},
-        {"fieldname": "efris_status", "fieldtype": "Select", "label": "EFRIS Status", "options": "\nPending\nSubmitted\nFailed", "read_only": 1},
-        {"fieldname": "efris_submitted_at", "fieldtype": "Datetime", "label": "EFRIS Submitted At", "read_only": 1},
+        # ── Tab header ────────────────────────────────────────────────────────
+        {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "URA",
+         "insert_after": "remarks", "module": "EFRIS Integration"},
+
+        # ── Left column: T131 Stock-In input fields ───────────────────────────
+        # Stock In Type labels map to T131 stockInType codes:
+        #   Import=101, Local Purchase=102, Manufacture/Assembling=103, Opening Stock=104
+        {"fieldname": "efris_stock_in_type", "fieldtype": "Select",
+         "label": "Stock In Type",
+         "options": "\nImport\nLocal Purchase\nManufacture/Assembling\nOpening Stock",
+         "module": "EFRIS Integration"},
+        {"fieldname": "efris_supplier_name", "fieldtype": "Data",
+         "label": "Supplier Name"},
+        {"fieldname": "efris_supplier_tin", "fieldtype": "Data",
+         "label": "Supplier TIN (EFRIS)"},
+        {"fieldname": "efris_reference_no", "fieldtype": "Data",
+         "label": "Reference No"},
+
+        # ── Right column: URA response (read-only) ────────────────────────────
         {"fieldname": "efris_col_break", "fieldtype": "Column Break"},
-        {"fieldname": "efris_stock_in_option", "fieldtype": "Select", "label": "EFRIS Stock-In Type",
+
+        {"fieldname": "efris_ura_remark", "fieldtype": "Small Text",
+         "label": "Remark", "read_only": 1,
+         "description": "Populated from URA EFRIS response after T131 submission.",
+         "module": "EFRIS Integration"},
+
+        # ── T114 / T115 / T119 status fields (shared) ─────────────────────────
+        {"fieldname": "efris_invoice_id", "fieldtype": "Data",
+         "label": "EFRIS Invoice ID", "read_only": 1},
+        {"fieldname": "efris_status", "fieldtype": "Select",
+         "label": "EFRIS Status",
+         "options": "\nPending\nSubmitted\nFailed", "read_only": 1},
+        {"fieldname": "efris_submitted_at", "fieldtype": "Datetime",
+         "label": "EFRIS Submitted At", "read_only": 1},
+
+        # ── Legacy numeric code for existing stock.py T114 flow (hidden) ──────
+        {"fieldname": "efris_stock_in_option", "fieldtype": "Select",
+         "label": "EFRIS Stock-In Code (Legacy)",
          "options": "\n101\n102\n103\n104\n105",
-         "description": "101=Import, 102=Local, 103=Manufacture, 104=Opening, 105=Transfer"},
-        {"fieldname": "efris_supplier_name", "fieldtype": "Data", "label": "Supplier Name (EFRIS)"},
-        {"fieldname": "efris_supplier_tin", "fieldtype": "Data", "label": "Supplier TIN (EFRIS)"},
-        {"fieldname": "efris_reference_no", "fieldtype": "Data", "label": "Reference No (EFRIS)"},
-        {"fieldname": "efris_recipient_name", "fieldtype": "Data", "label": "Recipient Name (EFRIS)"},
-        {"fieldname": "efris_recipient_tin", "fieldtype": "Data", "label": "Recipient TIN (EFRIS)"},
-        {"fieldname": "efris_return_against_invoice_id", "fieldtype": "Data", "label": "Return Against EFRIS Invoice ID"},
-        {"fieldname": "efris_return_reason_code", "fieldtype": "Select", "label": "Return Reason Code", "options": "\n101\n102\n103\n104\n105"},
-        {"fieldname": "efris_return_reason", "fieldtype": "Data", "label": "Return Reason"},
+         "description": "101=Import, 102=Local, 103=Manufacture, 104=Opening, 105=Transfer",
+         "hidden": 1},
+
+        # ── Return / inter-branch fields ───────────────────────────────────────
+        {"fieldname": "efris_recipient_name", "fieldtype": "Data",
+         "label": "Recipient Name (EFRIS)"},
+        {"fieldname": "efris_recipient_tin", "fieldtype": "Data",
+         "label": "Recipient TIN (EFRIS)"},
+        {"fieldname": "efris_return_against_invoice_id", "fieldtype": "Data",
+         "label": "Return Against EFRIS Invoice ID"},
+        {"fieldname": "efris_return_reason_code", "fieldtype": "Select",
+         "label": "Return Reason Code",
+         "options": "\n101\n102\n103\n104\n105"},
+        {"fieldname": "efris_return_reason", "fieldtype": "Data",
+         "label": "Return Reason"},
     ],
 
     # ─── Stock Reconciliation ─────────────────────────────────────────────
