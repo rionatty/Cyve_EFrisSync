@@ -392,9 +392,12 @@ def _ensure_session(client: EFRISClient, company: str):
     except RuntimeError:
         pass   # no key stored → need to initialise
 
-    # No session key stored at all → run T103+T104 to get one (first-run only).
+    # No session key stored at all → try T104 only to get one (first-run only).
+    # Do NOT call T103 first — that would reset the EFRIS session and invalidate
+    # any key currently held by SAP B1. T104 alone is sufficient to retrieve the
+    # active session key if the session is still live on the server.
     frappe.logger("efris").info(
-        f"[{company}] no session key stored — running T103+T104 to initialise"
+        f"[{company}] no session key stored — running T104 to initialise"
     )
     _refresh_session(client, company)
     client._aes_key = None
@@ -403,25 +406,21 @@ def _ensure_session(client: EFRISClient, company: str):
 
 def _refresh_session(client: EFRISClient, company: str):
     """
-    Mid-loop session refresh: T103 → T104 (forced) → reload key.
+    Mid-loop session refresh: T104 ONLY (forced, bypassing step-0 probe).
 
     Called when T126 returns a session-expired code (15/16/99/2066).
 
-    CRITICAL: get_symmetric_key is called with force=True to BYPASS the
-    step-0 key probe. Without force=True, the probe races against the T103
-    session reset and may report "key OK" before the server applies the new
-    key — the exact bug that caused error 15 on every real T126 call.
+    CRITICAL: Do NOT call T103 (sign_in) here.
+    T103 resets the EFRIS session AES key on the server. If T104 then fails
+    (e.g. because the Private Key in EFRIS Settings doesn't match the RSA key
+    registered with URA), we end up with NO valid key — and SAP B1's stored
+    SessionAESKey.txt is also now invalidated. By skipping T103, we avoid
+    making things worse; if the session is still active on EFRIS's side,
+    T104 alone can retrieve the current key without disturbing SAP B1.
     """
-    from efris_integration.api.auth import sign_in, get_symmetric_key
+    from efris_integration.api.auth import get_symmetric_key
 
-    # T103 first (EFRIS spec: sign-in must precede T104)
-    try:
-        sign_in(company)
-    except Exception:
-        pass   # non-fatal — T104 may still work
-
-    # force=True: skip step-0 probe, ALWAYS call T104
-    # (T103 just reset the server session key, so the old probe would lie)
+    # force=True: skip step-0 probe, always call T104
     get_symmetric_key(company, force=True)
     client._aes_key = None          # force reload from DB on next call
 

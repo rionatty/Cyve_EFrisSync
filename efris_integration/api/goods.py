@@ -113,7 +113,7 @@ def _register_goods(item, company: str) -> dict:
         try:
             result = _call_t130(client, payload, item.name)
         except EFRISAPIError as exc2:
-            _throw_goods_error("T130", exc2)
+            _throw_session_key_error("T130", exc2, company)
 
     # SAP B1 reads back the EFRIS-assigned goodsId after T130 and stores it.
     goods_id = (
@@ -189,7 +189,7 @@ def _modify_goods(item, company: str) -> dict:
         try:
             result = _call_t131(client, payload, item.name)
         except EFRISAPIError as exc2:
-            _throw_goods_error("T131", exc2)
+            _throw_session_key_error("T131", exc2, company)
 
     msg = f"Item <b>{item.item_code}</b> updated on EFRIS successfully."
     frappe.msgprint(msg, title="EFRIS T131 — Goods Updated", indicator="green")
@@ -234,17 +234,20 @@ def _ensure_session(client: EFRISClient, company: str):
 
 def _refresh_session(client: EFRISClient, company: str):
     """
-    Mid-call session refresh: T103 → T104 (forced, bypassing step-0 probe).
+    Mid-call session refresh: T104 ONLY (forced, bypassing step-0 probe).
     Called when T130/T131 returns a session-error code (15/2066/16/99).
+
+    CRITICAL: Do NOT call T103 (sign_in) here.
+    T103 resets the EFRIS session AES key on the server.  If T104 then fails
+    (e.g. because the private key in EFRIS Settings doesn't match the one
+    registered with URA), we end up with NO valid key — and SAP B1's stored
+    key is also now invalid.  By skipping T103 we avoid making things worse;
+    if the session is still active on EFRIS's side, T104 alone can refresh the
+    key without disturbing SAP B1's session.
     """
-    from efris_integration.api.auth import sign_in, get_symmetric_key
+    from efris_integration.api.auth import get_symmetric_key
 
-    try:
-        sign_in(company)
-    except Exception:
-        pass  # T103 non-fatal
-
-    # force=True bypasses the step-0 key probe that races against T103 reset
+    # force=True: always call T104, skip the step-0 probe
     get_symmetric_key(company, force=True)
     client._aes_key = None  # force reload from DB on next call
 
@@ -255,6 +258,37 @@ def _throw_goods_error(t_code: str, exc: EFRISAPIError):
         f"EFRIS {t_code} failed [<b>{exc.code}</b>]: {exc.message}",
         title=f"EFRIS {t_code} Error",
     )
+
+
+def _throw_session_key_error(t_code: str, exc: EFRISAPIError, company: str):
+    """
+    Raise an actionable error when error 15/2066 persists even after session refresh.
+
+    Error 15 = "Data decryption error" — EFRIS cannot decrypt our AES-encrypted
+    payload because the Session AES Key stored in EFRIS Settings does not match
+    the key currently active on the EFRIS server.
+
+    The only fix is to paste the correct key from SAP B1's SessionAESKey.txt into
+    EFRIS Settings.  Do NOT call T103 (sign-in) from ERPNext first — that would
+    reset the EFRIS session and invalidate the SAP B1 key too.
+    """
+    if exc.code in _SESSION_ERRORS:
+        frappe.throw(
+            f"<b>EFRIS {t_code} — Session AES Key mismatch [error {exc.code}]</b><br><br>"
+            "EFRIS cannot decrypt the request because the <b>Session AES Key</b> in "
+            f"EFRIS Settings for <b>{company}</b> does not match the active key on "
+            "the EFRIS server.<br><br>"
+            "<b>How to fix:</b><br>"
+            "1. Open SAP Business One on the EFRIS server.<br>"
+            "2. Copy the contents of <b>SessionAESKey.txt</b>.<br>"
+            "3. In ERPNext open <b>EFRIS Settings</b> → <b>Session AES Key</b> "
+            "and paste the copied value, then save.<br>"
+            "4. <b>Do NOT</b> click 'Full Initialise' or 'T103 Sign-In' before "
+            "uploading — that resets the EFRIS session and invalidates the key.<br>"
+            "5. Try uploading the item again.",
+            title="Session AES Key Mismatch",
+        )
+    _throw_goods_error(t_code, exc)
 
 
 # ─── Payload builder ───────────────────────────────────────────────────────────
