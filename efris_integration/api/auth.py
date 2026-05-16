@@ -277,10 +277,12 @@ def get_symmetric_key(company: str) -> dict:
     try:
         private_key_pem = client.key_manager.get_private_key()
     except Exception as e:
-        frappe.log_error(
-            f"T104 [{company}]: private key read error — {e}\n"
-            f"Check the 'Private Key' field in EFRIS Settings for company '{company}'.",
-            "EFRIS T104 Private Key Read Error",
+        # Private Key field is empty — T104 will still run but RSA-based candidates
+        # won't be available. Only raw/hash candidates will be tried (all likely wrong).
+        # User should paste SessionAESKey.txt content directly into the Session AES Key field.
+        frappe.logger("efris").warning(
+            f"T104 [{company}]: Private Key field is empty — "
+            f"RSA candidates unavailable. Consider pasting SessionAESKey.txt directly. Error: {e}"
         )
         private_key_pem = ""
 
@@ -392,35 +394,57 @@ def get_symmetric_key(company: str) -> dict:
         )
         return {"status": "AES Key Set (unverified)", "key_bits": len(fallback_key) * 8}
 
-    # Truly all failed — private key definitely wrong
+    # Truly all failed — diagnose whether key is missing or mismatched
     candidates_log = "\n".join(f"  [{l}] {k.hex()}" for l, k in candidates)
     frappe.log_error(
         f"T104 [{company}]: all {len(candidates)} AES key candidates failed T126 SESSION_EXPIRED.\n"
         f"passowrdDes raw[:32]: {raw[:32].hex()}\n"
-        f"private_key loaded: {'yes' if private_key_pem else 'NO'}\n"
+        f"private_key loaded: {'yes (' + str(len(private_key_pem)) + ' chars)' if private_key_pem else 'NO — field is empty'}\n"
         f"Candidates tried:\n{candidates_log}",
         "EFRIS T104 All Candidates Failed",
     )
     frappe.db.commit()
 
-    frappe.throw(
-        "T104: None of the candidate AES keys could decrypt EFRIS responses.<br><br>"
-        "<b>Root cause</b>: The private key in the <b>Private Key</b> field in EFRIS Settings "
-        "does NOT match the public key registered with EFRIS.<br><br>"
-        "<b>How to fix (Option A — generate a new key pair)</b>:<br>"
-        "1. Click <b>Generate Key Pair</b> in EFRIS Settings — a new 2048-bit RSA key pair is generated.<br>"
-        "2. Copy the public key shown in the dialog.<br>"
-        "3. Log into the EFRIS portal → Device Management → Update Public Key.<br>"
-        "4. Paste the public key and submit.<br>"
-        "5. Once EFRIS activates it, click <b>Full Initialise</b>.<br><br>"
-        "<b>How to fix (Option B — paste existing keys)</b>:<br>"
-        "1. Paste your <b>PrivateKey.txt</b> content into the Private Key field.<br>"
-        "2. Paste your <b>PublicKey.txt</b> content into the EFRIS Server Public Key field.<br>"
-        "3. Paste your <b>SessionAESKey.txt</b> content into the Session AES Key field.<br>"
-        "4. Save EFRIS Settings, then click <b>Test Session Key</b>.<br><br>"
-        "See <b>Error Log → EFRIS T104 All Candidates Failed</b> for raw bytes.",
-        title="T104: Private Key Mismatch",
-    )
+    # ── Give a targeted message depending on what's actually missing ──────
+    if not private_key_pem:
+        # Private Key field is empty — user hasn't pasted the key yet
+        frappe.throw(
+            "<b>The fastest fix</b>: Paste your <b>SessionAESKey.txt</b> content "
+            "(e.g. <code>x/SVvBh4S49ddPNX+nXQYg==</code>) directly into the "
+            "<b>Session AES Key</b> field in EFRIS Settings and save. "
+            "Then click <b>Test Session Key</b> — no need to run Full Initialise.<br><br>"
+            "<b>Also required for future sessions</b>:<br>"
+            "1. Paste <b>PrivateKey.txt</b> content → <b>Private Key</b> field.<br>"
+            "2. Paste <b>PublicKey.txt</b> content → <b>EFRIS Server Public Key</b> field.<br>"
+            "3. Save EFRIS Settings.<br><br>"
+            "T104 needs the private key to auto-refresh the session key when it expires. "
+            "Without it, you will need to manually paste the Session AES Key each time it expires.",
+            title="EFRIS Keys Not Configured",
+        )
+    else:
+        # Private Key is loaded but RSA decrypt didn't produce the right AES key
+        frappe.throw(
+            "<b>The fastest fix</b>: Paste your <b>SessionAESKey.txt</b> content "
+            "(e.g. <code>x/SVvBh4S49ddPNX+nXQYg==</code>) directly into the "
+            "<b>Session AES Key</b> field in EFRIS Settings and save. "
+            "Then click <b>Test Session Key</b>.<br><br>"
+            "<b>Why T104 auto-refresh fails</b>: The <b>Private Key</b> in EFRIS Settings "
+            "does not match the RSA key pair currently registered with EFRIS. "
+            "T104 uses this key to decrypt the session AES key — if the key is wrong, "
+            "auto-refresh will not work.<br><br>"
+            "<b>To fix auto-refresh (pick one)</b>:<br>"
+            "<u>Option A — re-register a new key pair with EFRIS</u>:<br>"
+            "1. Click <b>Generate Key Pair</b> — a new 2048-bit RSA key pair is generated.<br>"
+            "2. Copy the public key shown in the dialog.<br>"
+            "3. Log into the EFRIS portal → Device Management → Update Public Key.<br>"
+            "4. Submit and wait for EFRIS to activate it.<br>"
+            "5. Click <b>Full Initialise</b> to get a fresh session key.<br><br>"
+            "<u>Option B — use the original key files from when the device was registered</u>:<br>"
+            "1. Re-paste the correct <b>PrivateKey.txt</b> content into the Private Key field.<br>"
+            "2. Save and click <b>Full Initialise</b>.<br><br>"
+            "See <b>Error Log → EFRIS T104 All Candidates Failed</b> for technical details.",
+            title="T104: Session Key Auto-Refresh Failed",
+        )
 
 
 def _build_aes_key_candidates(raw_passowrdDes: bytes, private_key_pem: str) -> list:
