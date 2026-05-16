@@ -190,39 +190,126 @@ def derive_private_key_aes_key(taxpayer_id: str, init_date: str) -> bytes:
     return base[:16].ljust(16, b"\x00")
 
 
-def try_decrypt_private_key(encrypted_b64: str, taxpayer_id: str, tin: str = "") -> str:
+def try_decrypt_private_key(
+    encrypted_b64: str,
+    taxpayer_id: str,
+    tin: str = "",
+    key_table: str = "",
+) -> str:
     """
-    Robustly decrypt the T102 clientPriKey by trying every plausible key
-    derivation and padding approach.
+    Decrypt the T102 clientPriKey (white-box AES-128-ECB encrypted private key).
 
-    EFRIS encrypts the private key with AES-128-ECB where the key is derived
-    from (TaxpayerID[:10] + date).  Different EFRIS server versions, test vs
-    production, and URA API revisions have used slightly different formats,
-    so we try them all and return the first result that looks like a private key.
+    URA documentation: EFRIS encrypts clientPriKey using a white-box program and
+    returns the decryption key in the `keyTable` field of the T102 response.
+    The keyTable value is the AES key (base64-encoded) for decrypting clientPriKey.
 
-    Attempts (in order):
-      1. taxpayer_id[:10] + ddMMyy    ← SAP B1 EncryptionHelper.cs (standard)
-      2. taxpayer_id[:10] + ddMMyyyy  ← 4-digit year variant
-      3. taxpayer_id[:10] + yyyyMMdd  ← ISO date variant
-      4. taxpayer_id[:10] + MMddyy    ← US-style date
-      5. tin[:10]         + ddMMyy    ← Some servers use TIN instead
-      6. tin[:10]         + ddMMyyyy
-      7. Zero-strip (no PKCS7) for each key above
-      8. Not encrypted — raw base64-decoded PEM (test environment)
-      9. Plain base64 of "-----BEGIN..." PEM string
+    Decryption attempts (in order):
+      1. keyTable as AES key — base64 decoded directly (official URA method)
+      2. keyTable bytes truncated/padded to 16, 24, or 32 bytes
+      3. taxpayer_id[:10] + ddMMyy    ← SAP B1 EncryptionHelper.cs fallback
+      4. taxpayer_id[:10] + ddMMyyyy  ← 4-digit year variant
+      5. taxpayer_id[:10] + yyyyMMdd  ← ISO date variant
+      6. taxpayer_id[:10] + MMddyy    ← US-style date
+      7. Same 4 formats with TIN instead of taxpayer_id
+      8. Zero-strip (NUL-byte padding) for all of the above
+      9. Not encrypted — raw base64-decoded PEM (test environments)
 
-    Raises ValueError if all attempts fail (includes diagnostic info in Error Log).
+    Raises ValueError with full diagnostic info if all attempts fail.
     """
     from datetime import datetime
     from Crypto.Cipher import AES as _AES
     from Crypto.Util.Padding import unpad as _unpad
 
-    raw = base64.b64decode(encrypted_b64 + "==")
+    import frappe as _frappe
+
+    raw = base64.b64decode(encrypted_b64.strip().rstrip("=") + "==")
     today = datetime.now()
 
-    # ── Build candidate keys ─────────────────────────────────────────────────
-    candidates: list[tuple[str, bytes]] = []
+    _frappe.logger("efris").info(
+        f"try_decrypt_private_key: encrypted_b64 length={len(encrypted_b64)}  "
+        f"raw length={len(raw)} bytes  keyTable={'present' if key_table else 'missing'}"
+    )
 
+    def _try_decrypt(label: str, aes_key: bytes) -> str | None:
+        """Try AES-128/192/256-ECB decrypt, return plaintext string or None."""
+        if len(aes_key) not in (16, 24, 32):
+            return None
+        try:
+            cipher    = _AES.new(aes_key, _AES.MODE_ECB)
+            decrypted = cipher.decrypt(raw)
+
+            # PKCS7 unpad
+            try:
+                plain = _unpad(decrypted, _AES.block_size, style="pkcs7")
+                text  = plain.decode("utf-8", errors="replace").strip()
+                if _looks_like_private_key(text):
+                    _frappe.logger("efris").info(f"T102: clientPriKey OK — {label} (PKCS7)")
+                    return text
+            except Exception:
+                pass
+
+            # NUL-byte / zero-strip padding
+            try:
+                plain = decrypted.rstrip(b"\x00")
+                text  = plain.decode("utf-8", errors="replace").strip()
+                if _looks_like_private_key(text):
+                    _frappe.logger("efris").info(f"T102: clientPriKey OK — {label} (zero-pad)")
+                    return text
+            except Exception:
+                pass
+
+        except Exception:
+            pass
+        return None
+
+    tried: list[str] = []
+
+    # ── 1. keyTable (official URA white-box key) ──────────────────────────────
+    if key_table:
+        kt_clean = key_table.strip().rstrip("=")
+        try:
+            kt_raw = base64.b64decode(kt_clean + "==")
+            _frappe.logger("efris").info(
+                f"T102 keyTable: decoded to {len(kt_raw)} bytes  hex={kt_raw[:16].hex()}"
+            )
+            # Try exact length
+            result = _try_decrypt(f"keyTable({len(kt_raw)}B direct)", kt_raw)
+            if result:
+                return result
+            tried.append(f"keyTable-direct-{len(kt_raw)}B")
+
+            # Try first 16, 24, 32 bytes if keyTable is longer
+            for sz in (16, 24, 32):
+                if len(kt_raw) >= sz and len(kt_raw) != sz:
+                    result = _try_decrypt(f"keyTable[:{ sz}]", kt_raw[:sz])
+                    if result:
+                        return result
+                    tried.append(f"keyTable[:{sz}]")
+
+            # Try with keyTable padded/truncated to 16 bytes
+            if len(kt_raw) != 16:
+                padded = (kt_raw + b"\x00" * 16)[:16]
+                result = _try_decrypt("keyTable-padded-16B", padded)
+                if result:
+                    return result
+                tried.append("keyTable-padded-16B")
+
+        except Exception as exc:
+            _frappe.logger("efris").warning(f"T102 keyTable base64 decode failed: {exc}")
+            tried.append("keyTable-decode-failed")
+
+        # Also try keyTable as raw UTF-8 bytes (if it's already a 16-char string key)
+        try:
+            kt_utf8 = key_table.strip().encode("utf-8")
+            for sz in (16, 24, 32):
+                result = _try_decrypt(f"keyTable-utf8[:{sz}]", (kt_utf8 + b"\x00" * sz)[:sz])
+                if result:
+                    return result
+                tried.append(f"keyTable-utf8[:{sz}]")
+        except Exception:
+            pass
+
+    # ── 2. TaxpayerID / TIN + date (SAP B1 EncryptionHelper.cs fallback) ─────
     def _make_key(prefix: str, date_str: str) -> bytes:
         combined = (prefix + date_str).encode("utf-8")
         return combined[:16].ljust(16, b"\x00")
@@ -232,74 +319,45 @@ def try_decrypt_private_key(encrypted_b64: str, taxpayer_id: str, tin: str = "")
 
     for fmt in ("%d%m%y", "%d%m%Y", "%Y%m%d", "%m%d%y"):
         date_str = today.strftime(fmt)
-        candidates.append((f"taxpayer_id+{fmt}", _make_key(id_prefix, date_str)))
-        if tin_prefix:
-            candidates.append((f"tin+{fmt}", _make_key(tin_prefix, date_str)))
+        for prefix, label_prefix in [(id_prefix, "taxpayer_id"), (tin_prefix, "tin")]:
+            if not prefix:
+                continue
+            aes_key = _make_key(prefix, date_str)
+            result  = _try_decrypt(f"{label_prefix}+{fmt}", aes_key)
+            if result:
+                return result
+            tried.append(f"{label_prefix}+{fmt}")
 
-    # ── Try each candidate with PKCS7, then zero-strip ───────────────────────
-    tried = []
-    for label, aes_key in candidates:
-        cipher = _AES.new(aes_key, _AES.MODE_ECB)
-        decrypted = cipher.decrypt(raw)
-
-        # PKCS7
-        try:
-            plain = _unpad(decrypted, _AES.block_size, style="pkcs7")
-            text  = plain.decode("utf-8").strip()
-            if _looks_like_private_key(text):
-                import frappe as _frappe
-                _frappe.logger("efris").info(
-                    f"T102: clientPriKey decrypted OK — approach: {label}"
-                )
-                return text
-        except Exception:
-            pass
-
-        # Zero / null strip (some implementations use NUL-byte padding)
-        try:
-            plain = decrypted.rstrip(b"\x00")
-            text  = plain.decode("utf-8").strip()
-            if _looks_like_private_key(text):
-                import frappe as _frappe
-                _frappe.logger("efris").info(
-                    f"T102: clientPriKey decrypted (zero-pad) — approach: {label}"
-                )
-                return text
-        except Exception:
-            pass
-
-        tried.append(label)
-
-    # ── Not encrypted? Test environment returns raw PEM base64 ───────────────
+    # ── 3. Not encrypted — test environment returns raw PEM / raw base64 DER ──
     try:
         text = raw.decode("utf-8").strip()
         if _looks_like_private_key(text):
+            _frappe.logger("efris").info("T102: clientPriKey is unencrypted ✓")
             return text
     except Exception:
         pass
 
-    # ── Nothing worked — log diagnostics ─────────────────────────────────────
-    try:
-        import frappe as _frappe
-        _frappe.log_error(
-            f"T102 clientPriKey decryption exhausted all strategies.\n"
-            f"taxpayer_id = '{taxpayer_id}'  (prefix used: '{id_prefix}')\n"
-            f"tin         = '{tin}'          (prefix used: '{tin_prefix}')\n"
-            f"today       = {today.strftime('%Y-%m-%d')}\n"
-            f"raw length  = {len(raw)} bytes\n"
-            f"raw[:32]    = {raw[:32].hex()}\n"
-            f"approaches tried: {tried}",
-            "EFRIS T102 Decrypt Failed",
-        )
-    except Exception:
-        pass
+    # ── Nothing worked — log diagnostics and raise ────────────────────────────
+    _frappe.log_error(
+        f"T102 clientPriKey decryption exhausted all strategies.\n"
+        f"taxpayer_id  = '{taxpayer_id}'  (prefix: '{id_prefix}')\n"
+        f"tin          = '{tin}'          (prefix: '{tin_prefix}')\n"
+        f"keyTable     = '{(key_table or '')[:80]}'\n"
+        f"today        = {today.strftime('%Y-%m-%d')}\n"
+        f"raw length   = {len(raw)} bytes\n"
+        f"raw[:32] hex = {raw[:32].hex()}\n"
+        f"approaches tried ({len(tried)}): {tried}",
+        "EFRIS T102 Decrypt Failed",
+    )
 
     raise ValueError(
-        "T102 clientPriKey: AES decryption failed with every known key "
-        f"derivation (tried {len(tried)} approaches).<br><br>"
-        f"<b>taxpayer_id</b>: <code>{taxpayer_id}</code><br>"
-        "<b>Check</b>: EFRIS Settings → Company Info — ensure TaxpayerID "
-        "matches the 10-character EFRIS device registration ID exactly.<br>"
+        "T102 clientPriKey: AES decryption failed with every known approach "
+        f"(tried {len(tried)} strategies).<br><br>"
+        f"<b>keyTable</b>: {'✅ present' if key_table else '❌ missing — EFRIS did not return keyTable'}<br>"
+        f"<b>taxpayer_id</b>: <code>{taxpayer_id}</code><br><br>"
+        "The <b>keyTable</b> field returned by T102 is the white-box AES key that "
+        "decrypts <b>clientPriKey</b>. If keyTable is missing, check that your "
+        "EFRIS appId is set to <code>AP01</code> in EFRIS Settings.<br><br>"
         "See <b>Error Log → EFRIS T102 Decrypt Failed</b> for raw diagnostic bytes."
     )
 
