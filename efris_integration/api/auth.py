@@ -59,29 +59,31 @@ def client_init() -> dict:
     T102 — Download server RSA public key + AES-encrypted client private key.
 
     URA documentation (T102 flow):
-        1. Client requests RSA private key from EFRIS.
-        2. EFRIS encrypts the private key using a white-box encryption program.
-        3. EFRIS returns three fields:
-             clientPriKey  — private key encrypted via white-box cipher
-             serverPubKey  — server RSA public key (plain base64 DER)
-             keyTable      — white-box table / AES key used to encrypt clientPriKey
-        4. Client uses keyTable to decrypt clientPriKey and saves both files.
+        1. Client sends T102 with optional OTP field.
+        2. EFRIS encrypts the private key:
+             - With keyTable returned: decrypt using keyTable as AES key (white-box)
+             - Without keyTable: decrypt using the OTP sent in the request
+        3. Returns: clientPriKey, serverPubKey, keyTable (may be absent)
+        4. Client decrypts clientPriKey and saves both key files.
 
-    Decryption order (try_decrypt_private_key):
-        1. keyTable as raw AES key (base64 → bytes) — official URA method
-        2. TaxpayerID[:10] + ddMMyy  ← SAP B1 EncryptionHelper.cs fallback
-        3. …other date-format variants
-        4. Unencrypted raw PEM (test environments)
+    If decryption fails but the private key file already exists and is valid
+    (i.e. T104 works), we log a warning and keep the existing file rather
+    than failing — the key is already correctly set up.
     """
+    import random
+
     client   = EFRISClient()
     settings = client.settings
 
-    result = client.call("T102", encrypt=False)
+    # Generate OTP — sent in request so EFRIS can use it to encrypt the response
+    otp = str(random.randint(100000, 999999))
+
+    result = client.call("T102", payload={"otp": otp}, encrypt=False)
 
     # Exact field names from T102 docs
     server_pub_key     = result.get("serverPubKey", "")
     encrypted_priv_key = result.get("clientPriKey", "")
-    key_table          = result.get("keyTable", "")      # white-box decryption key
+    key_table          = result.get("keyTable", "")
 
     if not server_pub_key or not encrypted_priv_key:
         frappe.log_error(
@@ -96,34 +98,73 @@ def client_init() -> dict:
             f"Keys in response: <code>{list(result.keys())}</code>"
         )
 
-    # Log the raw values for diagnostics
     frappe.logger("efris").info(
+        f"T102  otp={otp}  keyTable={'present' if key_table else 'MISSING'}\n"
         f"T102  clientPriKey[:80] = {encrypted_priv_key[:80]}\n"
-        f"T102  serverPubKey[:60] = {server_pub_key[:60]}\n"
-        f"T102  keyTable[:60]     = {key_table[:60]}"
+        f"T102  serverPubKey[:60] = {server_pub_key[:60]}"
     )
 
-    # Decrypt private key — keyTable (official) first, then date-based fallbacks
+    km = client.key_manager
+
+    # Always save the server public key (unencrypted — just store it)
+    km.save_public_key(server_pub_key)
+
+    # Attempt to decrypt clientPriKey with all known strategies
+    private_key_pem = None
+    decrypt_error   = None
     try:
         private_key_pem = try_decrypt_private_key(
             encrypted_priv_key,
             taxpayer_id=settings.taxpayer_id or "",
             tin=settings.tin or "",
             key_table=key_table,
+            otp=otp,
+            device_no=settings.device_no or "",
         )
     except ValueError as exc:
-        frappe.throw(str(exc), title="T102 Private Key Decrypt Failed")
+        decrypt_error = str(exc)
 
-    # Write to files (U_OT_EPK path = serverPubKey, U_OT_PK path = clientPriKey)
-    km = client.key_manager
-    km.save_public_key(server_pub_key)
-    km.save_private_key(private_key_pem)
+    if private_key_pem:
+        km.save_private_key(private_key_pem)
+        frappe.msgprint(
+            "✅ T102: Server public key and client private key saved to files.",
+            indicator="green",
+        )
+        return {"status": "OK", "server_pub_key_preview": server_pub_key[:40] + "…"}
 
-    frappe.msgprint(
-        "✅ T102: Server public key and client private key saved to files.",
-        indicator="green",
-    )
-    return {"status": "OK", "server_pub_key_preview": server_pub_key[:40] + "…"}
+    # ── Decryption failed — check if existing private key is still valid ──
+    existing_key_ok = False
+    try:
+        existing_pem = km.get_private_key()
+        from efris_integration.utils.encryption import _import_rsa_key
+        _import_rsa_key(existing_pem)   # raises if invalid
+        existing_key_ok = True
+    except Exception:
+        pass
+
+    if existing_key_ok:
+        # Keep the existing working key — just update the server public key
+        frappe.log_error(
+            f"T102 clientPriKey decryption failed (keyTable missing, OTP={otp}).\n"
+            f"Existing private key file is valid — kept as-is.\n"
+            f"Error: {decrypt_error}\n"
+            f"clientPriKey[:120]: {encrypted_priv_key[:120]}",
+            "EFRIS T102 Decrypt Warning",
+        )
+        frappe.msgprint(
+            "⚠️ T102: Server public key updated.<br><br>"
+            "The EFRIS server did not return a decryptable private key "
+            f"(<code>keyTable</code> missing, OTP tried: <code>{otp}</code>).<br>"
+            "Your existing private key file is still valid — no change made to it.<br><br>"
+            "If you need to re-download the private key, contact URA support for "
+            "the correct decryption method for your EFRIS environment.",
+            indicator="orange",
+            title="T102 Partial Success",
+        )
+        return {"status": "partial", "server_pub_key_updated": True, "private_key_kept": True}
+
+    # No existing key and decryption failed — hard error
+    frappe.throw(decrypt_error or "T102 clientPriKey decryption failed.", title="T102 Private Key Decrypt Failed")
 
 
 # ─── T103: Sign In / Get Device Info ──────────────────────────────────────
