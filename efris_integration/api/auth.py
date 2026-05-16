@@ -23,7 +23,7 @@ from datetime import datetime
 
 import frappe
 
-from efris_integration.api.base import EFRISClient
+from efris_integration.api.base import EFRISClient, EFRISAPIError
 from efris_integration.utils.encryption import (
     rsa_decrypt,
     try_decrypt_private_key,
@@ -150,7 +150,7 @@ def client_init() -> dict:
         frappe.msgprint(
             "⚠️ T102: Server public key updated.<br><br>"
             "The EFRIS server did not return a decryptable private key "
-            f"(<code>keyTable</code> missing, OTP tried: <code>{otp}</code>).<br>"
+            "(<code>keyTable</code> missing).<br>"
             "Your existing private key file is still valid — no change made to it.<br><br>"
             "If you need to re-download the private key, contact URA support for "
             "the correct decryption method for your EFRIS environment.",
@@ -200,60 +200,230 @@ def sign_in() -> dict:
 @frappe.whitelist()
 def get_symmetric_key() -> dict:
     """
-    T104 — Get session AES key from EFRIS.
+    T104 — Get the session AES key from EFRIS and verify it works.
 
-    Official URA guide: passowrdDes is RSA-encrypted with the taxpayer's
-    public key. Decrypt with the private key to get the AES session key.
+    Strategy:
+      1. Call T104 → receive passowrdDes (RSA-encrypted AES key)
+      2. Build every plausible candidate AES key from passowrdDes
+         (PKCS1v1.5, OAEP, raw slices, hashes)
+      3. Immediately probe T126 with each candidate until one decrypts
+         the T126 response without error — that is the correct AES key
+      4. Save the verified key to SessionAESKey.txt and return
+
+    This approach completely bypasses the "which RSA padding does EFRIS use?"
+    question by letting T126's AES decryption be the arbiter of correctness.
     """
+    import base64 as _b64
+    import hashlib
+
     client = EFRISClient()
 
     try:
         private_key_pem = client.key_manager.get_private_key()
-    except (RuntimeError, Exception) as e:
+    except Exception as e:
         frappe.log_error(
-            f"T104: failed to read private key — {e}\n"
-            f"private_key_path = {client.settings.get('private_key_path')}",
+            f"T104: private key read error — {e}  path={client.settings.get('private_key_path')}",
             "EFRIS T104 Private Key Read Error",
         )
         private_key_pem = ""
 
-    result = client.call("T104", encrypt=False)
+    t104_result = client.call("T104", encrypt=False)
 
-    # Log the full T104 response so we can debug
-    frappe.logger("efris").info(
-        f"T104 response keys: {list(result.keys())}\n"
-        f"T104 full result: {result}"
-    )
+    encrypted_aes_b64 = (
+        t104_result.get("passowrdDes", "")
+        or t104_result.get("passwordDes", "")
+    ).strip()
 
-    # T104.cs: JsonPropertyName("passowrdDes") — SAP typo, two 'o's
-    encrypted_aes_b64 = result.get("passowrdDes", "") or result.get("passwordDes", "")
     if not encrypted_aes_b64:
         frappe.log_error(
-            f"T104 keys: {list(result.keys())}\nFull: {result}",
+            f"T104 keys: {list(t104_result.keys())}\nFull: {t104_result}",
             "EFRIS T104 Unexpected Response",
         )
         frappe.throw(
-            f"T104 returned no AES key.<br>"
-            f"Response keys: <code>{list(result.keys())}</code><br>"
-            "Check <b>Error Log → EFRIS T104 Unexpected Response</b>."
+            f"T104 returned no passowrdDes field.<br>"
+            f"Response keys: <code>{list(t104_result.keys())}</code>"
         )
 
+    raw = _b64.b64decode(encrypted_aes_b64.rstrip("=") + "==")
     frappe.logger("efris").info(
-        f"T104 passowrdDes length: {len(encrypted_aes_b64)} chars  "
-        f"preview: {encrypted_aes_b64[:40]}"
+        f"T104 passowrdDes: {len(raw)} bytes  first16={raw[:16].hex()}"
     )
 
-    aes_key_bytes = _extract_aes_key(encrypted_aes_b64, private_key_pem)
-    client.set_aes_key(aes_key_bytes)   # writes to SessionAESKey.txt
-
+    # ── Build every plausible candidate AES key ────────────────────────────
+    candidates = _build_aes_key_candidates(raw, private_key_pem)
     frappe.logger("efris").info(
-        f"T104: AES key saved — {len(aes_key_bytes)} bytes: {aes_key_bytes.hex()}"
+        f"T104: {len(candidates)} AES key candidates to probe: "
+        + ", ".join(f"[{l}]={k.hex()[:16]}…" for l, k in candidates)
     )
-    frappe.msgprint(
-        f"✅ T104: Session AES key ({len(aes_key_bytes) * 8}-bit) saved.",
-        indicator="green",
+
+    # ── Probe T126 with each candidate — verified key decrypts without error ─
+    network_error_label = None
+    for label, key_bytes in candidates:
+        client._aes_key = key_bytes  # inject candidate into this client instance
+
+        try:
+            # T126 probe: empty payload, response is AES-encrypted with the session key.
+            # If AES decrypt succeeds → this is the correct key.
+            client.call(
+                "T126",
+                payload=None,
+                encrypt=False,
+                doc_type="__t104_probe__",
+                doc_name=label,
+            )
+            # ✅ Got here → T126 decrypted successfully → key is correct
+            client.set_aes_key(key_bytes)       # persist to SessionAESKey.txt
+            client._aes_key = key_bytes          # keep in cache
+            frappe.logger("efris").info(
+                f"T104 ✅ AES key confirmed by T126 probe [{label}]: "
+                f"{len(key_bytes)*8}-bit  {key_bytes.hex()}"
+            )
+            frappe.msgprint(
+                f"✅ T104: Session AES key ({len(key_bytes)*8}-bit) saved.",
+                indicator="green",
+            )
+            return {"status": "AES Key Set", "key_bits": len(key_bytes) * 8, "method": label}
+
+        except EFRISAPIError as exc:
+            if exc.code == "SESSION_EXPIRED":
+                # AES decrypt failed for this candidate → try next
+                frappe.logger("efris").warning(
+                    f"T104 candidate [{label}] SESSION_EXPIRED (wrong key)"
+                )
+                client._aes_key = None
+                continue
+            # Non-SESSION_EXPIRED EFRIS error → AES decrypt DID succeed (got past it),
+            # EFRIS just returned a non-00 code for some other reason.
+            # The key is correct; save it and return.
+            client.set_aes_key(key_bytes)
+            client._aes_key = key_bytes
+            frappe.logger("efris").info(
+                f"T104 ✅ AES key confirmed [{label}] (T126 returned [{exc.code}] "
+                f"but decryption succeeded): {key_bytes.hex()}"
+            )
+            frappe.msgprint(
+                f"✅ T104: Session AES key ({len(key_bytes)*8}-bit) saved.",
+                indicator="green",
+            )
+            return {"status": "AES Key Set", "key_bits": len(key_bytes) * 8, "method": label}
+
+        except Exception as exc:
+            # Network / HTTP error — can't tell if key is right
+            frappe.logger("efris").warning(
+                f"T104 candidate [{label}] network error: {exc}"
+            )
+            if network_error_label is None:
+                network_error_label = label
+            client._aes_key = None
+            continue
+
+    # ── All candidates failed ──────────────────────────────────────────────
+    if network_error_label and candidates:
+        # Network errors prevented probing — fall back to PKCS1v1.5 result
+        # (best cryptographic guess) so the system can still try to operate.
+        _, fallback_key = candidates[0]
+        client.set_aes_key(fallback_key)
+        frappe.log_error(
+            f"T104: all T126 probes hit network errors. Using first candidate as fallback.\n"
+            f"fallback key: {fallback_key.hex()}",
+            "EFRIS T104 Probe Network Error",
+        )
+        frappe.msgprint(
+            f"⚠️ T104: AES key saved (unverified — T126 network errors during probe).",
+            indicator="orange",
+        )
+        return {"status": "AES Key Set (unverified)", "key_bits": len(fallback_key) * 8}
+
+    # Truly all failed — private key definitely wrong
+    candidates_log = "\n".join(f"  [{l}] {k.hex()}" for l, k in candidates)
+    frappe.log_error(
+        f"T104: all {len(candidates)} AES key candidates failed T126 SESSION_EXPIRED.\n"
+        f"passowrdDes raw[:32]: {raw[:32].hex()}\n"
+        f"private_key loaded: {'yes' if private_key_pem else 'NO'}\n"
+        f"Candidates tried:\n{candidates_log}",
+        "EFRIS T104 All Candidates Failed",
     )
-    return {"status": "AES Key Set", "key_bits": len(aes_key_bytes) * 8}
+    frappe.db.commit()
+
+    frappe.throw(
+        "T104: None of the candidate AES keys could decrypt EFRIS responses.<br><br>"
+        "This means the <b>private key in PrivateKey.txt does not match</b> "
+        "the public key registered with EFRIS.<br><br>"
+        "To fix:<br>"
+        "1. Run <b>T102 (Client Init)</b> to re-download the correct private key<br>"
+        "2. Or generate a new key pair and re-register the public key with EFRIS<br><br>"
+        "See <b>Error Log → EFRIS T104 All Candidates Failed</b> for raw bytes.",
+        title="T104 AES Key Verification Failed",
+    )
+
+
+def _build_aes_key_candidates(raw_passowrdDes: bytes, private_key_pem: str) -> list:
+    """
+    Build every plausible AES session key from T104 passowrdDes.
+    Ordered from most-likely (RSA decrypt) to least-likely (raw slices).
+    All entries have key length in (16, 24, 32) bytes.
+    """
+    import hashlib
+    from Crypto.Cipher import PKCS1_v1_5, PKCS1_OAEP as _OAEP
+    from efris_integration.utils.encryption import _import_rsa_key
+
+    seen: set[bytes] = set()
+    out: list[tuple[str, bytes]] = []
+
+    def _add(label: str, key: bytes):
+        if len(key) in (16, 24, 32) and key not in seen:
+            seen.add(key)
+            out.append((label, key))
+
+    # 1. RSA PKCS1v1.5 (official URA — most likely to be correct)
+    if private_key_pem:
+        try:
+            rsa_key  = _import_rsa_key(private_key_pem)
+            sentinel = object()
+            v15      = PKCS1_v1_5.new(rsa_key).decrypt(raw_passowrdDes, sentinel)
+            if v15 is not sentinel:
+                frappe.logger("efris").info(
+                    f"PKCS1v1.5 raw result: {len(v15)} bytes  hex={v15.hex()}"
+                )
+                _add("pkcs1v15-full", v15)
+                if len(v15) >= 16:
+                    _add("pkcs1v15-first16", v15[:16])
+                if len(v15) >= 16:
+                    _add("pkcs1v15-last16",  v15[-16:])
+            else:
+                frappe.logger("efris").warning("PKCS1v1.5 returned sentinel")
+        except Exception as exc:
+            frappe.logger("efris").warning(f"PKCS1v1.5 exception: {exc}")
+
+    # 2. RSA OAEP
+    if private_key_pem:
+        try:
+            rsa_key = _import_rsa_key(private_key_pem)
+            oaep    = _OAEP.new(rsa_key).decrypt(raw_passowrdDes)
+            frappe.logger("efris").info(
+                f"OAEP raw result: {len(oaep)} bytes  hex={oaep.hex()}"
+            )
+            _add("oaep-full", oaep)
+            if len(oaep) >= 16:
+                _add("oaep-first16", oaep[:16])
+        except Exception as exc:
+            frappe.logger("efris").warning(f"OAEP exception: {exc}")
+
+    # 3. Raw slices of passowrdDes (if EFRIS sends AES key unencrypted or
+    #    uses a non-RSA encoding in some environments)
+    r = raw_passowrdDes
+    _add("raw-first16", r[:16])
+    _add("raw-first24", r[:24])
+    _add("raw-first32", r[:32])
+    _add("raw-last16",  r[-16:])
+
+    # 4. Cryptographic digests of passowrdDes (some EFRIS variants)
+    _add("md5",            hashlib.md5(r).digest())
+    _add("sha256-first16", hashlib.sha256(r).digest()[:16])
+    _add("sha256-last16",  hashlib.sha256(r).digest()[-16:])
+    _add("sha256-full",    hashlib.sha256(r).digest())
+
+    return out
 
 
 # ─── T104 AES key extraction ─────────────────────────────────────────────
