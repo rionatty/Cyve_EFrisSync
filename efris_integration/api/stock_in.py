@@ -204,7 +204,7 @@ def _build_t131_payload(doc, company: str) -> dict:
 
     supplier_name  = (doc.get("efris_supplier_name") or "").strip()
     supplier_tin   = (doc.get("efris_supplier_tin")  or "").strip()
-    reference_no   = (doc.get("efris_reference_no")  or doc.name or "").strip()
+    reference_no   = (doc.get("efris_reference_no")  or "").strip()
     branch_id      = (settings.branch_id             or "").strip()
     posting_date   = str(doc.posting_date            or "")   # already yyyy-MM-dd
 
@@ -213,11 +213,17 @@ def _build_t131_payload(doc, company: str) -> dict:
         "operationType":   "101",           # always stock-in (increase) from this path
         "stockInType":     stock_in_code,   # 101-104
         "stockInDate":     posting_date,
-        "invoiceNo":       reference_no[:20],
         "isCheckBatchNo":  "0",
         "rollBackIfError": "0",
         "goodsTypeCode":   "101",           # 101=Goods (default)
     }
+
+    # invoiceNo: OPTIONAL — EFRIS validates it against invoices already in their
+    # system (error 2810 if it doesn't exist).  Only include when the user has
+    # entered a Reference No that is a real EFRIS-registered invoice number.
+    # SAP B1 leaves this empty unless the receipt is linked to a purchase invoice.
+    if reference_no:
+        header["invoiceNo"] = reference_no[:20]
 
     # branchId from EFRIS Settings (optional but always sent if configured)
     if branch_id:

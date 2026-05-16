@@ -105,7 +105,8 @@ CUSTOM_FIELDS = {
         # ── Right column ──────────────────────────────────────────────────────
         {"fieldname": "efris_reference_no",   "fieldtype": "Data",          "label": "Reference No",
          "insert_after": "efris_col_break",
-         "allow_on_submit": 1},
+         "allow_on_submit": 1,
+         "description": "EFRIS invoice number already registered in URA system (optional). Leave blank if no linked invoice."},
         {"fieldname": "efris_ura_remark",     "fieldtype": "Small Text",    "label": "Remark",
          "insert_after": "efris_reference_no",
          "read_only": 1,
