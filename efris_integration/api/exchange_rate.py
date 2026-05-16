@@ -348,75 +348,51 @@ def _call_t126_for_date(client: EFRISClient, query_ts: str, date_label: str) -> 
 
 def _ensure_session(client: EFRISClient, company: str):
     """
-    Establish a FRESH EFRIS session before the rate-fetch loop.
+    Load the session AES key before starting the exchange rate sync loop.
 
-    EFRIS documentation (and SAP B1 CommonValues.GetUraData) requires:
-        T103 (sign in)  → T104 (get new session AES key)  → store it → use it.
+    MATCHES SAP B1 ExchangeRateForm.cs exactly:
+        CommonValues.GetUraData();   // just loads config from DB
+        byte[] aesKey = Convert.FromBase64String(File.ReadAllText(CommonValues.SessionAESKey));
 
-    The session AES key resets daily. We must obtain a new one each time
-    rather than reusing a stored key that may already be stale.
+    SAP B1 does NOT call T103 or T104 here. It reads the existing session key
+    from file and uses it directly. Calling T103 (sign-in) would reset the EFRIS
+    session AES key on the server, invalidating our stored key immediately.
 
-    Flow:
-      1. T103 — sign in (MUST run before T104 per EFRIS spec).
-      2. T104 — decrypt fresh AES key using the client private key → save to DB.
-      3. Load the fresh key into the client for this sync run.
+    If no key is stored (first run), we fall back to _refresh_session (T103→T104)
+    to initialise, but this must not be done on every sync run.
 
-    Fallback: if T104 fails (private key wrong/empty), try the existing
-    stored key. If nothing is available, throw with a clear instruction.
+    If T126 fails mid-loop with error 15/16/99/2066, _refresh_session handles
+    the T103→T104 recovery at that point.
     """
-    from efris_integration.api.auth import sign_in, get_symmetric_key
-
-    # ── Step 1: T103 — sign in / refresh server-side session ─────────────
-    # Must complete before T104. Non-fatal if it fails — T104 may still work.
+    # Just load the existing stored key — no T103, no T104 proactively.
     try:
-        sign_in(company)
-        frappe.logger("efris").info(f"[{company}] T103 sign-in OK")
-    except Exception as e:
-        frappe.logger("efris").warning(f"[{company}] T103 warning (non-fatal): {str(e)[:200]}")
-
-    # ── Step 2: T104 — get fresh session AES key ─────────────────────────
-    # Decrypts passowrdDes using the stored private key → saves to session_aes_key field.
-    t104_ok = False
-    try:
-        get_symmetric_key(company)
-        client._aes_key = None              # force reload from DB after T104 saved it
         client._aes_key = client.key_manager.get_aes_key()
         frappe.logger("efris").info(
-            f"[{company}] T104 OK — fresh {len(client._aes_key)*8}-bit session key loaded"
+            f"[{company}] session key loaded from DB: {len(client._aes_key)*8}-bit"
         )
-        t104_ok = True
-    except Exception as e:
-        frappe.logger("efris").warning(
-            f"[{company}] T104 failed — will try existing stored key. "
-            f"Reason: {str(e)[:300]}"
-        )
-
-    if t104_ok:
         return
+    except RuntimeError:
+        pass   # no key stored → need to initialise
 
-    # ── Step 3: T104 failed — fall back to existing stored key ───────────
-    # This handles the case where the private key is wrong/missing but the
-    # user manually pasted a still-valid session key into the DB field.
-    # No popup here — the sync result message will tell the user if dates fail.
-    try:
-        client._aes_key = client.key_manager.get_aes_key()
-        frappe.logger("efris").info(
-            f"[{company}] T104 failed — using existing stored session key "
-            f"({len(client._aes_key)*8}-bit). Key may be stale."
-        )
-    except Exception as key_exc:
-        # No key at all — cannot proceed
-        raise frappe.ValidationError(
-            f"EFRIS session unavailable for {company}: T104 failed and no Session AES Key "
-            "is stored. Paste SessionAESKey.txt content into the Session AES Key field in "
-            "EFRIS Settings, then try again."
-        )
+    # No session key stored at all → run T103+T104 to get one (first-run only).
+    frappe.logger("efris").info(
+        f"[{company}] no session key stored — running T103+T104 to initialise"
+    )
+    _refresh_session(client, company)
+    client._aes_key = None
+    client._aes_key = client.key_manager.get_aes_key()
 
 
 def _refresh_session(client: EFRISClient, company: str):
     """
-    Mid-loop session refresh: T103 → T104 → reload key.
-    Called when T126 returns code 15/16/99 (session expired mid-sync).
+    Mid-loop session refresh: T103 → T104 (forced) → reload key.
+
+    Called when T126 returns a session-expired code (15/16/99/2066).
+
+    CRITICAL: get_symmetric_key is called with force=True to BYPASS the
+    step-0 key probe. Without force=True, the probe races against the T103
+    session reset and may report "key OK" before the server applies the new
+    key — the exact bug that caused error 15 on every real T126 call.
     """
     from efris_integration.api.auth import sign_in, get_symmetric_key
 
@@ -424,9 +400,11 @@ def _refresh_session(client: EFRISClient, company: str):
     try:
         sign_in(company)
     except Exception:
-        pass   # non-fatal
+        pass   # non-fatal — T104 may still work
 
-    get_symmetric_key(company)      # T104 — raises if private key wrong
+    # force=True: skip step-0 probe, ALWAYS call T104
+    # (T103 just reset the server session key, so the old probe would lie)
+    get_symmetric_key(company, force=True)
     client._aes_key = None          # force reload from DB on next call
 
 
