@@ -1,21 +1,88 @@
 {
   "actions": [],
   "allow_rename": 1,
-  "autoname": "Prompt",
+  "autoname": "hash",
   "creation": "2024-01-01 00:00:00.000000",
   "doctype": "DocType",
   "engine": "InnoDB",
-  "field_order": ["erpnext_uom", "efris_uom_code", "efris_uom_name"],
-  "fields": [
-    {"fieldname": "erpnext_uom", "fieldtype": "Link", "label": "ERPNext UOM", "options": "UOM", "reqd": 1, "in_list_view": 1},
-    {"fieldname": "efris_uom_code", "fieldtype": "Data", "label": "EFRIS UOM Code", "reqd": 1, "in_list_view": 1, "description": "e.g. 101=Piece, 102=Kg, 103=Litre, 104=Metre"},
-    {"fieldname": "efris_uom_name", "fieldtype": "Data", "label": "EFRIS UOM Name", "in_list_view": 1}
+  "issingle": 0,
+  "title_field": "uom_name",
+
+  "field_order": [
+    "company",
+    "col_main",
+    "code",
+    "uom_name",
+    "ura_uom"
   ],
+
+  "fields": [
+    {
+      "fieldname": "company",
+      "fieldtype": "Link",
+      "label": "Company",
+      "options": "Company",
+      "reqd": 1,
+      "in_list_view": 1,
+      "search_index": 1,
+      "bold": 1
+    },
+    { "fieldname": "col_main", "fieldtype": "Column Break" },
+    {
+      "fieldname": "code",
+      "fieldtype": "Data",
+      "label": "Code",
+      "reqd": 1,
+      "in_list_view": 1,
+      "description": "ERPNext UOM abbreviation or short code (e.g. Pcs, Kgs, Ltrs)"
+    },
+    {
+      "fieldname": "uom_name",
+      "fieldtype": "Data",
+      "label": "Name",
+      "reqd": 1,
+      "in_list_view": 1,
+      "description": "Full UOM display name (e.g. Pieces, Kilograms, Litres)"
+    },
+    {
+      "fieldname": "ura_uom",
+      "fieldtype": "Data",
+      "label": "URA UOM",
+      "in_list_view": 1,
+      "description": "URA unit of measure code sent to EFRIS (e.g. PP-Piece, KGM-Kilogram, BE-Bundle)"
+    }
+  ],
+
   "module": "EFRIS Integration",
   "name": "EFRIS UOM Mapping",
   "permissions": [
-    {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1}
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 0,
+      "export": 1,
+      "print": 0,
+      "read": 1,
+      "report": 0,
+      "role": "System Manager",
+      "share": 0,
+      "submit": 0,
+      "write": 1
+    },
+    {
+      "create": 0,
+      "delete": 0,
+      "email": 0,
+      "export": 0,
+      "print": 0,
+      "read": 1,
+      "report": 0,
+      "role": "Accounts Manager",
+      "share": 0,
+      "submit": 0,
+      "write": 1
+    }
   ],
-  "sort_field": "modified",
-  "sort_order": "DESC"
+  "sort_field": "company",
+  "sort_order": "ASC"
 }

@@ -1,5 +1,5 @@
 """
-T126 — Fetch URA Exchange Rates
+T126 — Fetch URA Exchange Rates  (per-company)
 T120 — Exchange Rate model
 
 Mirrors EXACTLY: ExchangeRateForm.cs → FetchAndUpdateRatesForRange()
@@ -15,9 +15,9 @@ SAP B1 flow (ExchangeRateForm.cs):
   8. T120 fields: currency, rate, nowTime.
   9. Skip UGX.  Upsert into ORTT (ERPNext: Currency Exchange).
 
-Key file formats (SAP B1 reads both as base64 text):
-  aesKey     = Convert.FromBase64String(File.ReadAllText(SessionAESKey path))
-  privateKey = Convert.FromBase64String(File.ReadAllText(PrivateKey    path))
+All entry points require a `company` argument — EFRIS Settings are per-company.
+The scheduler wrapper `sync_exchange_rates_all_companies()` iterates every
+configured company automatically.
 """
 
 from datetime import date, datetime, timedelta
@@ -28,15 +28,22 @@ from efris_integration.api.base import EFRISClient, EFRISAPIError
 
 
 @frappe.whitelist()
-def sync_exchange_rates(from_date: str = None, to_date: str = None) -> dict:
+def sync_exchange_rates(
+    company: str,
+    from_date: str = None,
+    to_date: str = None,
+) -> dict:
     """
-    Fetch EFRIS exchange rates and upsert into ERPNext Currency Exchange.
+    Fetch EFRIS exchange rates for a company and upsert into ERPNext Currency Exchange.
 
     Mirrors ExchangeRateForm.cs → FetchAndUpdateRatesForRange() exactly:
       • One T126 call per calendar day in [from_date, to_date]
       • Payload = AES-encrypted {"queryDate":"yyyy-MM-dd 00:00:00"} + RSA-SHA1 signature
       • Failed days are skipped (logged); the loop continues
     """
+    if not company:
+        frappe.throw("Company is required for exchange rate sync.")
+
     today_str = date.today().isoformat()
     from_date = from_date or today_str
     to_date   = to_date   or today_str
@@ -50,11 +57,11 @@ def sync_exchange_rates(from_date: str = None, to_date: str = None) -> dict:
     if d_from > d_to:
         frappe.throw("From Date must not be after To Date.")
 
-    client = EFRISClient()
+    client = EFRISClient(company=company)
 
     # Ensure we have a valid session key before starting the loop.
     # This mirrors SAP B1's GetUraData() / CommonValues.GetUraData() call at the top.
-    _ensure_session(client)
+    _ensure_session(client, company)
 
     total_inserted = 0
     total_updated  = 0
@@ -64,27 +71,27 @@ def sync_exchange_rates(from_date: str = None, to_date: str = None) -> dict:
     days_total = (d_to - d_from).days + 1
 
     while current <= d_to:
-        date_str  = current.isoformat()                      # "yyyy-MM-dd"
-        query_ts  = date_str + " 00:00:00"                   # "yyyy-MM-dd 00:00:00"
+        date_str     = current.isoformat()           # "yyyy-MM-dd"
+        query_ts     = date_str + " 00:00:00"        # "yyyy-MM-dd 00:00:00"
         erpnext_date = current.strftime("%Y-%m-%d")
 
         try:
-            rate_list = _fetch_rates_for_date(client, query_ts, date_str)
+            rate_list = _fetch_rates_for_date(client, company, query_ts, date_str)
         except EFRISAPIError as exc:
             # Non-00 returnCode for this date — log and continue (matches SAP B1)
             frappe.log_error(
-                f"T126 [{exc.code}] {exc.message} for queryDate={query_ts}",
+                f"T126 [{exc.code}] {exc.message} for queryDate={query_ts} company={company}",
                 "EFRIS Exchange Rate Skip",
             )
             frappe.logger("efris").warning(
-                f"T126 skip {date_str}: [{exc.code}] {exc.message}"
+                f"T126 skip {date_str} [{company}]: [{exc.code}] {exc.message}"
             )
             failed_dates.append(date_str)
             current += timedelta(days=1)
             continue
         except Exception as exc:
             frappe.log_error(
-                f"T126 unexpected error for queryDate={query_ts}: {exc}",
+                f"T126 unexpected error for queryDate={query_ts} company={company}: {exc}",
                 "EFRIS Exchange Rate Error",
             )
             failed_dates.append(date_str)
@@ -92,7 +99,9 @@ def sync_exchange_rates(from_date: str = None, to_date: str = None) -> dict:
             continue
 
         if not rate_list:
-            frappe.logger("efris").warning(f"T126: no rates returned for {date_str}")
+            frappe.logger("efris").warning(
+                f"T126: no rates returned for {date_str} [{company}]"
+            )
             current += timedelta(days=1)
             continue
 
@@ -140,9 +149,39 @@ def sync_exchange_rates(from_date: str = None, to_date: str = None) -> dict:
     }
 
 
+def sync_exchange_rates_all_companies(from_date: str = None, to_date: str = None):
+    """
+    Scheduler entry point — runs sync_exchange_rates for EVERY configured company.
+    Called daily via hooks.py scheduler_events.
+    Errors in one company do not stop other companies from running.
+    """
+    companies = frappe.get_all(
+        "EFRIS Settings",
+        filters={"api_url": ["!=", ""]},
+        fields=["name"],
+    )
+    for row in companies:
+        company = row["name"]
+        try:
+            frappe.logger("efris").info(
+                f"Daily exchange rate sync — starting for [{company}]"
+            )
+            sync_exchange_rates(company=company, from_date=from_date, to_date=to_date)
+        except Exception:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"EFRIS Daily Exchange Rate Sync Failed [{company}]",
+            )
+
+
 # ─── Core per-day fetch ────────────────────────────────────────────────────────
 
-def _fetch_rates_for_date(client: EFRISClient, query_ts: str, date_label: str) -> list:
+def _fetch_rates_for_date(
+    client: EFRISClient,
+    company: str,
+    query_ts: str,
+    date_label: str,
+) -> list:
     """
     Call T126 for a single date.  Mirrors the inner loop body of
     FetchAndUpdateRatesForRange() in ExchangeRateForm.cs.
@@ -160,9 +199,9 @@ def _fetch_rates_for_date(client: EFRISClient, query_ts: str, date_label: str) -
             raise   # real EFRIS error — let caller handle
         # Session expired → refresh and retry once
         frappe.logger("efris").info(
-            f"T126 [{exc.code}] for {date_label} — refreshing session and retrying."
+            f"T126 [{exc.code}] for {date_label} [{company}] — refreshing session and retrying."
         )
-        _refresh_session(client)
+        _refresh_session(client, company)
         result = _call_t126_for_date(client, query_ts, date_label)   # may raise again
 
     return _extract_rate_list(result)
@@ -191,13 +230,10 @@ def _call_t126_for_date(client: EFRISClient, query_ts: str, date_label: str) -> 
 
 # ─── Session helpers ───────────────────────────────────────────────────────────
 
-def _ensure_session(client: EFRISClient):
+def _ensure_session(client: EFRISClient, company: str):
     """
     Verify the current session key is usable before starting the rate loop.
     Mirrors SAP B1's CommonValues.GetUraData() at the start of FetchAndUpdateRatesForRange.
-
-    If the session key is missing or stale, calls get_symmetric_key() which
-    checks the existing key and only runs T104 if it is expired.
     """
     existing_key = None
     try:
@@ -207,8 +243,6 @@ def _ensure_session(client: EFRISClient):
 
     if existing_key:
         client._aes_key = existing_key
-        # Quick T126 probe with empty payload (cheap, no queryDate needed) to
-        # verify the key decrypts before we start the full date loop.
         try:
             client.call(
                 "T126", payload=None, encrypt=False,
@@ -223,17 +257,16 @@ def _ensure_session(client: EFRISClient):
         # SESSION_EXPIRED → fall through to refresh
         client._aes_key = None
 
-    # Refresh session (T104 only if needed)
-    _refresh_session(client)
+    _refresh_session(client, company)
 
 
-def _refresh_session(client: EFRISClient):
+def _refresh_session(client: EFRISClient, company: str):
     """
     Renew the EFRIS session via T104 (checks existing key first).
     Forces a reload of the AES key from file after T104 completes.
     """
     from efris_integration.api.auth import get_symmetric_key
-    get_symmetric_key()
+    get_symmetric_key(company)
     client._aes_key = None   # force reload from SessionAESKey.txt on next call
 
 
@@ -254,7 +287,6 @@ def _extract_rate_list(result) -> list:
             val = result.get(key)
             if isinstance(val, list):
                 return val
-        # Any list value inside the dict
         for val in result.values():
             if isinstance(val, list):
                 return val

@@ -1,15 +1,19 @@
 {
   "actions": [],
   "allow_rename": 0,
-  "autoname": "Prompt",
+  "autoname": "field:company",
   "creation": "2024-01-01 00:00:00.000000",
   "doctype": "DocType",
   "editable_grid": 0,
   "engine": "InnoDB",
-  "issingle": 1,
+  "issingle": 0,
+  "track_changes": 1,
 
   "field_order": [
+    "company",
+
     "tab_connection",
+    "section_api",
     "api_url",
     "public_key_path",
     "session_key_path",
@@ -20,7 +24,27 @@
     "efris_username",
     "api_version",
 
+    "section_company_info",
+    "tin",
+    "taxpayer_id",
+    "legal_name",
+    "col_company1",
+    "company_name",
+    "address",
+    "phone",
+    "email",
+
+    "section_branch",
+    "branch_id",
+    "branch_name",
+    "branch_code",
+    "col_branch",
+    "industry_code",
+
     "tab_settings",
+    "use_uom_name",
+    "excise_duty_doc_source",
+    "col_sett0",
     "use_t127",
     "gross_on_sales_order",
     "gross_on_delivery",
@@ -36,122 +60,185 @@
     "issue_from_production",
     "receipt_from_production",
     "col_sett3",
-    "alcohol_industry",
-
-    "tab_company",
-    "tin",
-    "taxpayer_id"
+    "alcohol_industry"
   ],
 
   "fields": [
 
+    {
+      "fieldname": "company",
+      "fieldtype": "Link",
+      "label": "Company",
+      "options": "Company",
+      "reqd": 1,
+      "in_list_view": 1,
+      "bold": 1,
+      "search_index": 1
+    },
+
     { "fieldname": "tab_connection", "fieldtype": "Tab Break", "label": "Connection" },
 
+    { "fieldname": "section_api", "fieldtype": "Section Break", "label": "API Configuration" },
     {
       "fieldname": "api_url",
       "fieldtype": "Data",
       "label": "URL",
       "reqd": 1,
-      "description": "https://efristest.ura.go.ug/efrisws/ws/taapp/getInformation"
+      "description": "Test: https://efristest.ura.go.ug/efrisws/ws/taapp/getInformation  |  Production: https://efrisws.ura.go.ug/ws/taapp/getInformation"
     },
     {
       "fieldname": "public_key_path",
       "fieldtype": "Data",
       "label": "EFRIS Public Key Path",
-      "description": "Absolute server path to PublicKey.txt  (U_OT_EPK)"
+      "description": "Absolute path to PublicKey.txt on the server"
     },
     {
       "fieldname": "session_key_path",
       "fieldtype": "Data",
       "label": "Session Key Path",
-      "description": "Absolute server path to SessionAESKey.txt  (U_OT_SAK)"
+      "description": "Absolute path to SessionAESKey.txt on the server"
     },
     {
       "fieldname": "private_key_path",
       "fieldtype": "Data",
       "label": "Private Key Path",
-      "description": "Absolute server path to PrivateKey.txt  (U_OT_PK)"
+      "description": "Absolute path to PrivateKey.txt on the server"
     },
     { "fieldname": "col_conn", "fieldtype": "Column Break" },
     {
       "fieldname": "device_no",
       "fieldtype": "Data",
       "label": "Device No",
-      "reqd": 1,
-      "description": "U_OT_DevNo"
+      "reqd": 1
     },
     {
       "fieldname": "app_id",
       "fieldtype": "Data",
       "label": "App Id",
       "reqd": 1,
-      "description": "U_OT_AppId"
+      "default": "AP04"
     },
     {
       "fieldname": "efris_username",
       "fieldtype": "Data",
       "label": "User Name",
       "reqd": 1,
-      "description": "U_OT_UserName"
+      "default": "admin"
     },
     {
       "fieldname": "api_version",
       "fieldtype": "Data",
       "label": "Version",
-      "default": "1.1.20191201",
-      "description": "U_OT_Version"
+      "default": "1.1.20191201"
     },
 
-    { "fieldname": "tab_settings", "fieldtype": "Tab Break", "label": "Settings" },
-
-    { "fieldname": "use_t127",            "fieldtype": "Check", "label": "USE T127  On AR Invoice",   "description": "U_OT_UseT127" },
-    { "fieldname": "gross_on_sales_order","fieldtype": "Check", "label": "Gross On Sales Order",      "description": "U_OT_GrosTot" },
-    { "fieldname": "gross_on_delivery",   "fieldtype": "Check", "label": "Gross On Delivery",         "description": "U_OT_GrosDL"  },
-    { "fieldname": "gross_on_ar_invoice", "fieldtype": "Check", "label": "Gross On AR Invoice",       "default": "1", "description": "U_OT_GrosAR"  },
-    { "fieldname": "col_sett1", "fieldtype": "Column Break" },
-    { "fieldname": "beverage_industry",   "fieldtype": "Check", "label": "Beverage Industry",         "description": "U_OT_BEVIND"  },
-    { "fieldname": "price_on_sales_order","fieldtype": "Check", "label": "Price On Sales Order",      "description": "U_OT_UPrcSO"  },
-    { "fieldname": "price_on_delivery",   "fieldtype": "Check", "label": "Price On Delivery",         "default": "1", "description": "U_OT_UPrcDL"  },
-    { "fieldname": "price_on_ar_invoice", "fieldtype": "Check", "label": "Price On AR Invoice",       "default": "1", "description": "U_OT_UPrcAR"  },
-    { "fieldname": "col_sett2", "fieldtype": "Column Break" },
-    { "fieldname": "multi_branch",        "fieldtype": "Check", "label": "Enable Multi-Branch",       "description": "U_OT_MULTIBRNCH" },
-    { "fieldname": "stock_transfer",      "fieldtype": "Check", "label": "Stock Transfer",            "description": "U_OT_CSTCTSF"   },
-    { "fieldname": "issue_from_production",   "fieldtype": "Check", "label": "Issue From Production",   "description": "U_OT_IFP" },
-    { "fieldname": "receipt_from_production", "fieldtype": "Check", "label": "Receipt From Production", "description": "U_OT_RFP" },
-    { "fieldname": "col_sett3", "fieldtype": "Column Break" },
-    { "fieldname": "alcohol_industry",    "fieldtype": "Check", "label": "Alcohol Industry",          "description": "U_OT_ALCOHOL" },
-
-    {
-      "fieldname": "tab_company",
-      "fieldtype": "Tab Break",
-      "label": "Company Info",
-      "description": "In SAP B1 these are read from OADM (company master). Enter them here once."
-    },
+    { "fieldname": "section_company_info", "fieldtype": "Section Break", "label": "Company Information" },
     {
       "fieldname": "tin",
       "fieldtype": "Data",
       "label": "TIN",
       "reqd": 1,
-      "description": "Uganda Revenue Authority TIN  (OADM.DdctOffice)"
+      "description": "Uganda Revenue Authority Tax Identification Number"
     },
     {
       "fieldname": "taxpayer_id",
       "fieldtype": "Data",
       "label": "Taxpayer ID",
       "reqd": 1,
-      "description": "EFRIS Taxpayer ID  (OADM.TaxIdNum2)"
-    }
+      "description": "EFRIS Taxpayer ID (usually 1)"
+    },
+    {
+      "fieldname": "legal_name",
+      "fieldtype": "Data",
+      "label": "Legal Name",
+      "description": "Registered legal name of the company"
+    },
+    { "fieldname": "col_company1", "fieldtype": "Column Break" },
+    {
+      "fieldname": "company_name",
+      "fieldtype": "Data",
+      "label": "Business Name",
+      "description": "Trading / business name"
+    },
+    {
+      "fieldname": "address",
+      "fieldtype": "Small Text",
+      "label": "Address"
+    },
+    {
+      "fieldname": "phone",
+      "fieldtype": "Data",
+      "label": "Phone"
+    },
+    {
+      "fieldname": "email",
+      "fieldtype": "Data",
+      "label": "Email",
+      "options": "Email"
+    },
+
+    { "fieldname": "section_branch", "fieldtype": "Section Break", "label": "Branch Information" },
+    {
+      "fieldname": "branch_id",
+      "fieldtype": "Data",
+      "label": "Branch ID",
+      "description": "EFRIS Branch ID assigned by URA"
+    },
+    {
+      "fieldname": "branch_name",
+      "fieldtype": "Data",
+      "label": "Branch Name"
+    },
+    {
+      "fieldname": "branch_code",
+      "fieldtype": "Data",
+      "label": "Branch Code",
+      "default": "00"
+    },
+    { "fieldname": "col_branch", "fieldtype": "Column Break" },
+    {
+      "fieldname": "industry_code",
+      "fieldtype": "Select",
+      "label": "Industry Code",
+      "options": "101\n102\n104\n105\n106\n107\n108\n109\n110\n111\n112",
+      "default": "101",
+      "description": "101:General | 102:Export | 104:Imported Service | 105:Telecom | 106:Stamp Duty | 107:Hotel | 108:Other | 109:Airline | 110:EDC | 111:Auction | 112:Export Service"
+    },
+
+    { "fieldname": "tab_settings", "fieldtype": "Tab Break", "label": "Settings" },
+
+    { "fieldname": "use_uom_name",           "fieldtype": "Check", "label": "Use UOM Name",                            "description": "Send UOM name to EFRIS instead of code" },
+    { "fieldname": "excise_duty_doc_source", "fieldtype": "Check", "label": "Excise Duty Calculation Document Source", "description": "Use source document for excise duty calculation" },
+    { "fieldname": "col_sett0", "fieldtype": "Column Break" },
+    { "fieldname": "use_t127",             "fieldtype": "Check", "label": "USE T127  On AR Invoice",  "description": "Fetch live excise rates from URA before invoice submission" },
+    { "fieldname": "gross_on_sales_order", "fieldtype": "Check", "label": "Gross On Sales Order" },
+    { "fieldname": "gross_on_delivery",    "fieldtype": "Check", "label": "Gross On Delivery" },
+    { "fieldname": "gross_on_ar_invoice",  "fieldtype": "Check", "label": "Gross On AR Invoice",  "default": "1" },
+    { "fieldname": "col_sett1", "fieldtype": "Column Break" },
+    { "fieldname": "beverage_industry",    "fieldtype": "Check", "label": "Beverage Industry" },
+    { "fieldname": "price_on_sales_order", "fieldtype": "Check", "label": "Price On Sales Order" },
+    { "fieldname": "price_on_delivery",    "fieldtype": "Check", "label": "Price On Delivery",    "default": "1" },
+    { "fieldname": "price_on_ar_invoice",  "fieldtype": "Check", "label": "Price On AR Invoice",  "default": "1" },
+    { "fieldname": "col_sett2", "fieldtype": "Column Break" },
+    { "fieldname": "multi_branch",            "fieldtype": "Check", "label": "Enable Multi-Branch" },
+    { "fieldname": "stock_transfer",          "fieldtype": "Check", "label": "Stock Transfer" },
+    { "fieldname": "issue_from_production",   "fieldtype": "Check", "label": "Issue From Production" },
+    { "fieldname": "receipt_from_production", "fieldtype": "Check", "label": "Receipt From Production" },
+    { "fieldname": "col_sett3", "fieldtype": "Column Break" },
+    { "fieldname": "alcohol_industry",        "fieldtype": "Check", "label": "Alcohol Industry" }
+
   ],
 
   "in_create": 0,
   "module": "EFRIS Integration",
   "name": "EFRIS Settings",
+  "naming_rule": "By fieldname",
   "permissions": [
     {
       "create": 1,
-      "delete": 0,
+      "delete": 1,
       "email": 0,
-      "export": 0,
+      "export": 1,
       "print": 0,
       "read": 1,
       "report": 0,
@@ -159,10 +246,22 @@
       "share": 0,
       "submit": 0,
       "write": 1
+    },
+    {
+      "create": 0,
+      "delete": 0,
+      "email": 0,
+      "export": 0,
+      "print": 0,
+      "read": 1,
+      "report": 0,
+      "role": "Accounts Manager",
+      "share": 0,
+      "submit": 0,
+      "write": 1
     }
   ],
-  "sort_field": "modified",
-  "sort_order": "DESC",
-  "title_field": "api_url",
-  "track_changes": 0
+  "sort_field": "company",
+  "sort_order": "ASC",
+  "title_field": "company"
 }

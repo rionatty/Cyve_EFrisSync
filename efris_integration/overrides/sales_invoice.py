@@ -1,26 +1,26 @@
 """
 Sales Invoice hooks — triggered on submit and cancel.
 
-Submit: auto-submit to EFRIS if auto_submit_sales_invoice = 1 in settings.
-        Credit notes (is_return=1) go to T110; regular invoices go to T108.
+Submit: auto-submit to EFRIS if EFRIS Settings are configured for the company.
+        Credit notes (is_return=1) go to T110; regular invoices go to T109.
 Cancel: EFRIS does not support cancellation; we only clear local EFRIS fields
         and log a warning. The user must issue a credit note instead.
 """
 
 import frappe
+from efris_integration.utils.helpers import get_efris_settings
 
 
 def on_submit(doc, method):
-    settings = frappe.get_single("EFRIS Settings")
-    if not settings.enabled:
-        return
+    try:
+        settings = get_efris_settings(doc.company)
+    except Exception:
+        return  # EFRIS not configured for this company — skip silently
 
     if doc.is_return:
-        if settings.auto_submit_credit_notes:
-            _submit_credit_note(doc)
+        _submit_credit_note(doc)
     else:
-        if settings.auto_submit_sales_invoice:
-            _submit_invoice(doc)
+        _submit_invoice(doc)
 
 
 def on_cancel(doc, method):

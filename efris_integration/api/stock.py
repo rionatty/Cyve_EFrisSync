@@ -36,6 +36,7 @@ import frappe
 
 from efris_integration.api.base import EFRISClient, EFRISAPIError
 from efris_integration.utils.helpers import (
+    get_efris_settings,
     get_item_efris_fields,
     get_supplier_efris_fields,
     map_uom,
@@ -85,8 +86,8 @@ def submit_purchase_receipt(receipt_name: str) -> dict:
 
 def _post_t114(doc, doctype: str, docname: str) -> dict:
     """Build T114 payload for Stock Entry."""
-    settings = frappe.get_single("EFRIS Settings")
-    client = EFRISClient()
+    settings = get_efris_settings(doc.company)
+    client   = EFRISClient(company=doc.company)
 
     stock_in_option = doc.get("efris_stock_in_option") or STOCK_IN_LOCAL
 
@@ -130,8 +131,8 @@ def _post_t114(doc, doctype: str, docname: str) -> dict:
 
 def _post_t114_purchase_receipt(doc) -> dict:
     """Build T114 payload for Purchase Receipt."""
-    settings = frappe.get_single("EFRIS Settings")
-    client = EFRISClient()
+    settings = get_efris_settings(doc.company)
+    client   = EFRISClient(company=doc.company)
     supplier_fields = get_supplier_efris_fields(doc.supplier)
 
     stock_in_option = doc.get("efris_stock_in_option") or STOCK_IN_LOCAL
@@ -176,12 +177,12 @@ def submit_stock_issue(stock_entry_name: str) -> dict:
     if doc.get("efris_invoice_id"):
         frappe.throw(f"Already submitted: {doc.efris_invoice_id}")
 
-    settings = frappe.get_single("EFRIS Settings")
+    settings = get_efris_settings(doc.company)
     return _post_t115(doc, settings, "Stock Entry", stock_entry_name)
 
 
 def _post_t115(doc, settings, doctype: str, docname: str) -> dict:
-    client = EFRISClient()
+    client = EFRISClient(company=doc.company)
     items = [i for i in doc.items if i.s_warehouse]
     goods_details = _build_stock_goods(items, doc)
     total = sum(safe_float(i.amount) for i in items)
@@ -213,7 +214,7 @@ def _post_t115(doc, settings, doctype: str, docname: str) -> dict:
 
 def _post_t115_manufacture_issue(doc, settings, doctype: str, docname: str) -> dict:
     """Issue From Production: raw materials transferred to work order → T115 with operationType 202."""
-    client = EFRISClient()
+    client = EFRISClient(company=doc.company)
     items = [i for i in doc.items if i.s_warehouse]
     goods_details = _build_stock_goods(items, doc)
     total = sum(safe_float(i.amount) for i in items)
@@ -259,8 +260,8 @@ def submit_goods_return(doctype: str, docname: str) -> dict:
     if doc.get("efris_invoice_id"):
         frappe.throw(f"Already submitted: {doc.efris_invoice_id}")
 
-    settings = frappe.get_single("EFRIS Settings")
-    client = EFRISClient()
+    settings = get_efris_settings(doc.company)
+    client   = EFRISClient(company=doc.company)
 
     items = doc.items
     goods_details = _build_stock_goods(items, doc)
@@ -296,6 +297,7 @@ def submit_goods_return(doctype: str, docname: str) -> dict:
 # ────────────────────────────────────────────────────────────────────────────
 
 def _build_stock_goods(items, doc) -> list:
+    company = getattr(doc, "company", "") or ""
     goods = []
     for idx, line in enumerate(items, start=1):
         item_fields = get_item_efris_fields(line.item_code)
@@ -304,7 +306,7 @@ def _build_stock_goods(items, doc) -> list:
                 "item": line.item_name or line.item_code,
                 "itemCode": line.item_code,
                 "qty": str(safe_float(line.qty)),
-                "unitOfMeasure": map_uom(line.uom),
+                "unitOfMeasure": map_uom(line.uom, company),
                 "unitPrice": str(safe_float(line.basic_rate if hasattr(line, "basic_rate") else line.get("rate", 0))),
                 "total": str(safe_float(line.amount)),
                 "orderNumber": str(idx),
@@ -320,3 +322,8 @@ def _save_efris_result(doc, result: dict):
     doc.db_set("efris_invoice_id", invoice_id, update_modified=False)
     doc.db_set("efris_status", "Submitted", update_modified=False)
     doc.db_set("efris_submitted_at", datetime.now(), update_modified=False)
+
+
+# Alias used by stock_entry.py override for manufacture RM issue
+# Will be replaced with T131 implementation in the stock module rewrite.
+_post_t131_issue = _post_t115

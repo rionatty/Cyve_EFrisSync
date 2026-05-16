@@ -1,10 +1,11 @@
 """
-Base EFRIS API handler.
+Base EFRIS API handler — per-company.
 
 Handles the universal request/response envelope, encryption, and HTTP transport.
 Mirrors: ClsDIGeneric.cs  +  Request.cs  +  Response.cs
 
 Key architecture:
+  - EFRISClient is instantiated with a company name; settings are loaded per company.
   - All T-codes POST to the SAME endpoint (api_url = getInformation)
   - The interface code inside globalInfo routes the call server-side
   - Data is AES-128-ECB encrypted, optionally GZip compressed, Base64 encoded
@@ -17,7 +18,7 @@ import frappe
 import requests
 
 from efris_integration.utils.encryption import decode_response_data, encode_request_data
-from efris_integration.utils.helpers import log_efris, make_global_info
+from efris_integration.utils.helpers import get_efris_settings, log_efris, make_global_info
 
 
 class EFRISAPIError(Exception):
@@ -29,14 +30,17 @@ class EFRISAPIError(Exception):
 
 class EFRISClient:
     """
-    Stateless EFRIS API client.
-    Instantiate once per logical operation; do not cache across requests.
+    Stateless EFRIS API client — one instance per company per logical operation.
+    Do not cache across requests.
     """
 
-    def __init__(self):
-        self.settings = frappe.get_single("EFRIS Settings")
-        self._km = None         # KeyManager — lazy-loaded
-        self._aes_key = None    # cached bytes for this request lifecycle
+    def __init__(self, company: str):
+        if not company:
+            frappe.throw("EFRISClient requires a company name.", title="EFRIS Config Error")
+        self.company  = company
+        self.settings = get_efris_settings(company)
+        self._km      = None      # KeyManager — lazy-loaded
+        self._aes_key = None      # cached bytes for this request lifecycle
 
     # ──────────────────────────────────────────────────────────────────────
     # Primary public API
@@ -127,7 +131,8 @@ class EFRISClient:
                     f"content length : {len(content)} chars\n"
                     f"content preview: {content[:120]}\n"
                     f"encryptCode    : {encrypt_code}\n"
-                    f"zipCode        : {desc.get('zipCode', '?')}",
+                    f"zipCode        : {desc.get('zipCode', '?')}\n"
+                    f"company        : {self.company}",
                     f"EFRIS Decrypt Fail [{interface_code}]",
                 )
 
@@ -171,14 +176,14 @@ class EFRISClient:
             pass  # key file missing or unreadable — auto-init below
 
         frappe.logger("efris").info(
-            "EFRIS: session AES key not found — auto-initialising (T103+T104)."
+            f"EFRIS [{self.company}]: session AES key not found — auto-initialising (T103+T104)."
         )
         try:
             self._auto_init_session()
         except Exception as exc:
-            frappe.log_error(frappe.get_traceback(), "EFRIS Auto-Init Failed")
+            frappe.log_error(frappe.get_traceback(), f"EFRIS Auto-Init Failed [{self.company}]")
             frappe.throw(
-                f"EFRIS session could not be initialised automatically: {exc}<br>"
+                f"EFRIS session for <b>{self.company}</b> could not be initialised automatically: {exc}<br>"
                 "Check <b>Error Log → EFRIS Auto-Init Failed</b> for details.<br>"
                 "Ensure EFRIS Settings (API URL, TaxpayerID, key file paths) are correct."
             )
@@ -197,12 +202,12 @@ class EFRISClient:
         from efris_integration.api.auth import sign_in, get_symmetric_key
 
         try:
-            sign_in()   # T103: settle/initialise the session
+            sign_in(self.company)   # T103: settle/initialise the session
         except Exception:
-            pass        # T103 failure is non-fatal — T104 may still work
+            pass                    # T103 failure is non-fatal — T104 may still work
 
-        get_symmetric_key()          # T104: get fresh session AES key
-        self._aes_key = None         # force reload from file
+        get_symmetric_key(self.company)   # T104: get fresh session AES key
+        self._aes_key = None              # force reload from file
 
     def set_aes_key(self, key_bytes: bytes):
         """Called by auth.py after T104 to persist the session AES key."""

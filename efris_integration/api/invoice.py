@@ -18,6 +18,7 @@ from efris_integration.api.base import EFRISClient, EFRISAPIError
 from efris_integration.utils.helpers import (
     generate_qr_code_b64,
     get_customer_efris_fields,
+    get_efris_settings,
     get_item_efris_fields,
     map_tax_code,
     map_uom,
@@ -38,14 +39,14 @@ def submit_sales_invoice(invoice_name: str) -> dict:
     if doc.get("efris_invoice_id"):
         frappe.throw(f"Invoice already submitted to EFRIS (ID: {doc.efris_invoice_id}).")
 
-    settings = frappe.get_single("EFRIS Settings")
-    client = EFRISClient()
+    settings = get_efris_settings(doc.company)
+    client   = EFRISClient(company=doc.company)
 
     # T127 prefetch if enabled
     if settings.use_t127:
         from efris_integration.api.t127 import get_industry_config
         try:
-            get_industry_config()
+            get_industry_config(company=doc.company)
         except Exception as e:
             frappe.log_error(str(e), "EFRIS T127 prefetch failed — continuing without")
 
@@ -54,6 +55,7 @@ def submit_sales_invoice(invoice_name: str) -> dict:
         doc, settings,
         use_gross=bool(settings.gross_on_ar_invoice),
         use_price=bool(settings.price_on_ar_invoice),
+        company=doc.company,
     )
 
     payload = {
@@ -81,12 +83,13 @@ def submit_sales_invoice(invoice_name: str) -> dict:
 
 @frappe.whitelist()
 def query_invoices(
+    company: str,
     invoice_no: str = "",
     from_date: str = "",
     to_date: str = "",
     page: int = 1,
 ) -> dict:
-    client = EFRISClient()
+    client = EFRISClient(company=company)
     payload = {
         "invoiceNo": invoice_no,
         "startDate": from_date,
@@ -177,6 +180,7 @@ def _build_goods_and_tax(
     settings,
     use_gross: bool = False,
     use_price: bool = True,
+    company: str = "",
 ) -> tuple[list, list, dict]:
     """
     Build goodsDetails, taxDetails, and summary arrays for any invoice-like doc.
@@ -191,10 +195,11 @@ def _build_goods_and_tax(
     total_gross = 0.0
 
     for idx, line in enumerate(doc.items, start=1):
-        item_fields = get_item_efris_fields(line.item_code)
-        tax_rate    = _get_line_tax_rate(doc, line)
-        uom_code    = map_uom(line.uom)
-        tax_cat_code = map_tax_code(_get_line_tax_account(doc, line))
+        _company     = company or doc.company or ""
+        item_fields  = get_item_efris_fields(line.item_code)
+        tax_rate     = _get_line_tax_rate(doc, line)
+        uom_code     = map_uom(line.uom, _company)
+        tax_cat_code = map_tax_code(_get_line_tax_account(doc, line), _company)
 
         # Base amounts (net)
         net_unit_price = safe_float(line.rate)

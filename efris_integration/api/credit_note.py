@@ -20,7 +20,7 @@ from efris_integration.api.invoice import (
     _pay_way,
     _seller_details,
 )
-from efris_integration.utils.helpers import get_customer_efris_fields
+from efris_integration.utils.helpers import get_customer_efris_fields, get_efris_settings
 
 
 CREDIT_REASON_CODES = {
@@ -60,11 +60,13 @@ def submit_credit_note(invoice_name: str, reason_code: str = "101", reason: str 
         )
 
     ori_invoice_no = return_against
-    settings = frappe.get_single("EFRIS Settings")
-    client = EFRISClient()
+    settings = get_efris_settings(doc.company)
+    client   = EFRISClient(company=doc.company)
 
     buyer = get_customer_efris_fields(doc.customer)
-    goods_details, tax_details, summary = _build_goods_and_tax(doc, settings)
+    goods_details, tax_details, summary = _build_goods_and_tax(
+        doc, settings, company=doc.company
+    )
 
     issued_date = str(doc.posting_date) + " 00:00:00"
 
@@ -106,8 +108,8 @@ def submit_credit_note(invoice_name: str, reason_code: str = "101", reason: str 
 
 
 @frappe.whitelist()
-def query_credit_notes(reference_no: str = "", from_date: str = "", to_date: str = "", page: int = 1) -> dict:
-    client = EFRISClient()
+def query_credit_notes(company: str, reference_no: str = "", from_date: str = "", to_date: str = "", page: int = 1) -> dict:
+    client = EFRISClient(company=company)
     payload = {
         "referenceNo": reference_no,
         "startDate": from_date,

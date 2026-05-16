@@ -1,5 +1,6 @@
 """
 General-purpose helpers for EFRIS integration.
+All lookups are per-company — pass the company name wherever settings are needed.
 """
 
 import io
@@ -11,100 +12,95 @@ import qrcode
 from PIL import Image
 
 
+# ── Time / UUID ───────────────────────────────────────────────────────────────
+
 def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def generate_data_exchange_id() -> str:
-    return str(uuid.uuid4()).replace("-", "")[:16]
+    return str(uuid.uuid4()).replace("-", "")[:32]
 
+
+# ── Global info envelope (outer EFRIS packet) ─────────────────────────────────
 
 def make_global_info(interface_code: str, settings) -> dict:
+    """
+    Build the globalInfo section of every EFRIS request.
+    `settings` is an EFRIS Settings document (per-company).
+    """
     return {
-        "appId": settings.app_id,
-        "brn": settings.branch_id or "",
+        "appId":          settings.app_id or "AP04",
+        "version":        settings.api_version or "1.1.20191201",
         "dataExchangeId": generate_data_exchange_id(),
-        "deviceMAC": "1",
-        "deviceNo": settings.device_no,
-        "longitude": "0",
-        "latitude": "0",
-        "interfaceCode": interface_code,
-        "requestCode": "TP",
-        "requestTime": now_str(),
-        "responseCode": "TA",
-        "taxpayerID": settings.taxpayer_id,
-        "tin": settings.tin,
-        "userName": settings.efris_username,
-        "version": settings.api_version or "1.1.20191201",
+        "interfaceCode":  interface_code,
+        "requestCode":    "TP",
+        "requestTime":    now_str(),
+        "responseCode":   "TA",
+        "userName":       settings.efris_username or "admin",
+        "deviceMAC":      "FFFFFFFFFFFF",
+        "deviceNo":       settings.device_no,
+        "tin":            settings.tin,
+        "brn":            settings.branch_id or "",
+        "taxpayerID":     settings.taxpayer_id,
+        "longitude":      "0",
+        "latitude":       "0",
+        "agentType":      "0",
     }
 
 
-def log_efris(
-    document_type: str,
-    document_name: str,
-    interface_code: str,
-    request_payload: dict,
-    response_payload: dict,
-    status: str,
-    error_message: str = "",
-):
-    try:
-        frappe.get_doc(
-            {
-                "doctype": "EFRIS Log",
-                "document_type": document_type,
-                "document_name": document_name,
-                "interface_code": interface_code,
-                "request_payload": frappe.as_json(request_payload),
-                "response_payload": frappe.as_json(response_payload),
-                "status": status,
-                "error_message": error_message,
-                "timestamp": now_str(),
-            }
-        ).insert(ignore_permissions=True)
-    except Exception:
-        frappe.log_error(frappe.get_traceback(), "EFRIS Log Insert Failed")
+# ── EFRIS Settings lookup (per-company) ───────────────────────────────────────
+
+def get_efris_settings(company: str):
+    """
+    Return the EFRIS Settings document for the given company.
+    Raises a clear, user-friendly error if not configured.
+    """
+    from efris_integration.efris_integration.doctype.efris_settings.efris_settings import get_settings
+    return get_settings(company)
 
 
-def generate_qr_code_b64(data: str) -> str:
-    """Generate a QR code PNG and return as base64 data URI."""
-    qr = qrcode.QRCode(box_size=4, border=2)
-    qr.add_data(data)
-    qr.make(fit=True)
-    img: Image.Image = qr.make_image(fill_color="black", back_color="white")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    import base64
+# ── UOM mapping (per-company) ─────────────────────────────────────────────────
 
-    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
-
-
-def get_efris_settings() -> "frappe.Document":
-    settings = frappe.get_single("EFRIS Settings")
-    if not settings.api_url:
-        frappe.throw("EFRIS Settings are not configured. Please configure via EFRIS Settings.")
-    return settings
-
-
-def map_tax_code(erpnext_tax: str) -> str:
-    """Map ERPNext tax template/account to EFRIS tax category code."""
-    row = frappe.db.get_value(
-        "EFRIS Tax Mapping",
-        {"erpnext_tax": erpnext_tax},
-        "efris_tax_code",
-    )
-    return row or "101"  # default: standard 18% VAT
-
-
-def map_uom(erpnext_uom: str) -> str:
-    """Map ERPNext UOM to EFRIS UOM code."""
+def map_uom(erpnext_uom: str, company: str) -> str:
+    """
+    Map an ERPNext UOM to its URA UOM code for the given company.
+    Looks up EFRIS UOM Mapping by company + code field.
+    Falls back to the raw UOM string if no mapping found.
+    """
     row = frappe.db.get_value(
         "EFRIS UOM Mapping",
-        {"erpnext_uom": erpnext_uom},
-        "efris_uom_code",
+        {"company": company, "code": erpnext_uom},
+        "ura_uom",
     )
-    return row or "101"  # default: piece
+    if row:
+        return row
+    # Try matching by uom_name as fallback
+    row = frappe.db.get_value(
+        "EFRIS UOM Mapping",
+        {"company": company, "uom_name": erpnext_uom},
+        "ura_uom",
+    )
+    return row or erpnext_uom
 
+
+# ── Tax code mapping (per-company) ────────────────────────────────────────────
+
+def map_tax_code(erpnext_tax: str, company: str) -> str:
+    """
+    Map an ERPNext tax code/account to its URA Tax Code for the given company.
+    Returns the URA tax code (e.g. "18", "0", "-").
+    Falls back to "18" (standard VAT) if not mapped.
+    """
+    row = frappe.db.get_value(
+        "EFRIS Tax Mapping",
+        {"company": company, "erpnext_tax_code": erpnext_tax},
+        "ura_tax_code",
+    )
+    return row or "18"
+
+
+# ── Item EFRIS fields ─────────────────────────────────────────────────────────
 
 def get_item_efris_fields(item_code: str) -> dict:
     return frappe.db.get_value(
@@ -122,6 +118,8 @@ def get_item_efris_fields(item_code: str) -> dict:
         as_dict=True,
     ) or {}
 
+
+# ── Customer EFRIS fields ─────────────────────────────────────────────────────
 
 def get_customer_efris_fields(customer: str) -> dict:
     return frappe.db.get_value(
@@ -141,6 +139,8 @@ def get_customer_efris_fields(customer: str) -> dict:
     ) or {}
 
 
+# ── Supplier EFRIS fields ─────────────────────────────────────────────────────
+
 def get_supplier_efris_fields(supplier: str) -> dict:
     return frappe.db.get_value(
         "Supplier",
@@ -149,6 +149,51 @@ def get_supplier_efris_fields(supplier: str) -> dict:
         as_dict=True,
     ) or {}
 
+
+# ── QR code generator ─────────────────────────────────────────────────────────
+
+def generate_qr_code_b64(data: str) -> str:
+    """Generate a QR code PNG and return as a base64 data URI."""
+    qr = qrcode.QRCode(box_size=4, border=2)
+    qr.add_data(data)
+    qr.make(fit=True)
+    img: Image.Image = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    import base64
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+# ── EFRIS request/response logger ────────────────────────────────────────────
+
+def log_efris(
+    document_type: str,
+    document_name: str,
+    interface_code: str,
+    request_payload: dict,
+    response_payload: dict,
+    status: str,
+    error_message: str = "",
+):
+    try:
+        frappe.get_doc(
+            {
+                "doctype":          "EFRIS Log",
+                "document_type":    document_type,
+                "document_name":    document_name,
+                "interface_code":   interface_code,
+                "request_payload":  frappe.as_json(request_payload),
+                "response_payload": frappe.as_json(response_payload),
+                "status":           status,
+                "error_message":    error_message,
+                "timestamp":        now_str(),
+            }
+        ).insert(ignore_permissions=True)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "EFRIS Log Insert Failed")
+
+
+# ── Type-safe coercions ───────────────────────────────────────────────────────
 
 def safe_float(value) -> float:
     try:

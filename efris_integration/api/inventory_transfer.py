@@ -19,6 +19,7 @@ import frappe
 
 from efris_integration.api.base import EFRISClient
 from efris_integration.utils.helpers import (
+    get_efris_settings,
     get_item_efris_fields,
     map_uom,
     safe_float,
@@ -34,11 +35,11 @@ def submit_inter_branch_transfer(stock_entry_name: str) -> dict:
     if doc.docstatus != 1:
         frappe.throw("Stock Entry must be submitted first.")
 
-    settings = frappe.get_single("EFRIS Settings")
+    settings = get_efris_settings(doc.company)
     if not settings.multi_branch:
         frappe.throw("Multi-branch mode is not enabled in EFRIS Settings.")
 
-    client = EFRISClient()
+    client = EFRISClient(company=doc.company)
     goods_details = _build_goods(doc)
     total = sum(safe_float(i.amount) for i in doc.items)
     issued_date = str(doc.posting_date) + " 00:00:00"
@@ -94,6 +95,7 @@ def submit_inter_branch_transfer(stock_entry_name: str) -> dict:
 
 
 def _build_goods(doc) -> list:
+    company = getattr(doc, "company", "") or ""
     goods = []
     for idx, line in enumerate(doc.items, 1):
         item_fields = get_item_efris_fields(line.item_code)
@@ -101,7 +103,7 @@ def _build_goods(doc) -> list:
             "item": line.item_name or line.item_code,
             "itemCode": line.item_code,
             "qty": str(safe_float(line.qty)),
-            "unitOfMeasure": map_uom(line.uom),
+            "unitOfMeasure": map_uom(line.uom, company),
             "unitPrice": str(safe_float(line.basic_rate)),
             "total": str(safe_float(line.amount)),
             "orderNumber": str(idx),

@@ -1,10 +1,12 @@
 import frappe
+from efris_integration.utils.helpers import get_efris_settings
 
 
 def on_submit(doc, method):
-    settings = frappe.get_single("EFRIS Settings")
-    if not settings.enabled or not settings.auto_submit_delivery_note:
-        return
+    try:
+        get_efris_settings(doc.company)
+    except Exception:
+        return  # EFRIS not configured for this company — skip silently
     try:
         from efris_integration.api.sales_order import submit_delivery_note
         submit_delivery_note(doc.name)

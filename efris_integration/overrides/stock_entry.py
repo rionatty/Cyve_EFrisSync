@@ -3,13 +3,13 @@ Stock Entry hook — dispatches to the correct EFRIS endpoint based on stock_ent
 
 Type → EFRIS mapping
 ──────────────────────────────────────────────────────────────────────────────
-Material Receipt                   → T114  (stock-in, option from doc field)
-Material Issue                     → T115  (stock-out)
-Send to Subcontractor              → T115  (stock-out)
-Material Transfer for Manufacture  → T115  (Issue From Production, op 202)
-Manufacture                        → T114  (Receipt From Production, op 103)
-                                     + T115 for consumed RM if issue_from_production ON
-Material Transfer                  → T115 + T114 if stock_transfer flag AND inter-branch
+Material Receipt                   → T131  (stock-in, option from doc field)
+Material Issue                     → T131  (stock-out)
+Send to Subcontractor              → T131  (stock-out)
+Material Transfer for Manufacture  → T131  (Issue From Production, op 202)
+Manufacture                        → T131  (Receipt From Production, op 103)
+                                     + T131 for consumed RM if issue_from_production ON
+Material Transfer                  → T131 + T131 if stock_transfer flag AND inter-branch
 ──────────────────────────────────────────────────────────────────────────────
 
 Mirrors: GoodsReceipt.cs, GoodsIssue.cs, IssueFromProduction.cs,
@@ -17,36 +17,36 @@ Mirrors: GoodsReceipt.cs, GoodsIssue.cs, IssueFromProduction.cs,
 """
 
 import frappe
+from efris_integration.utils.helpers import get_efris_settings
 
 
 def on_submit(doc, method):
-    settings = frappe.get_single("EFRIS Settings")
-    if not settings.enabled:
-        return
+    try:
+        settings = get_efris_settings(doc.company)
+    except Exception:
+        return  # EFRIS not configured for this company — skip silently
 
     t = doc.stock_entry_type
 
     try:
         if t == "Material Receipt":
-            if settings.auto_submit_stock_receipt:
-                _run_stock_receipt(doc)
+            _run_stock_receipt(doc)
 
         elif t in ("Material Issue", "Send to Subcontractor"):
-            if settings.auto_submit_stock_issue:
-                _run_stock_issue(doc)
+            _run_stock_issue(doc)
 
         elif t == "Material Transfer for Manufacture":
             # Issue From Production — raw materials consumed by work order
-            if settings.issue_from_production and settings.auto_submit_manufacture:
+            if settings.issue_from_production:
                 _run_stock_issue(doc)
 
         elif t == "Manufacture":
             # Receipt From Production — finished goods produced
-            if settings.receipt_from_production and settings.auto_submit_manufacture:
+            if settings.receipt_from_production:
                 _run_stock_receipt(doc)
             # Also submit consumed raw materials as goods issue if enabled
-            if settings.issue_from_production and settings.auto_submit_manufacture:
-                _run_manufacture_rm_issue(doc)
+            if settings.issue_from_production:
+                _run_manufacture_rm_issue(doc, settings)
 
         elif t == "Material Transfer":
             # Inter-branch only, and only if stock_transfer flag is ON
@@ -76,14 +76,13 @@ def _run_stock_issue(doc):
     submit_stock_issue(doc.name)
 
 
-def _run_manufacture_rm_issue(doc):
-    """Submit raw material (source warehouse) lines of a Manufacture entry as T115."""
-    from efris_integration.api.stock import _post_t115
-    settings = frappe.get_single("EFRIS Settings")
+def _run_manufacture_rm_issue(doc, settings):
+    """Submit raw material (source warehouse) lines of a Manufacture entry."""
+    from efris_integration.api.stock import _post_t131_issue
     # Only submit if there are consumed (source-warehouse) lines
     consumed = [i for i in doc.items if i.s_warehouse and not i.t_warehouse]
     if consumed:
-        _post_t115(doc, settings, "Stock Entry", doc.name + "-RM")
+        _post_t131_issue(doc, settings, "Stock Entry", doc.name + "-RM")
 
 
 def _run_inter_branch(doc):

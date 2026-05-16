@@ -1,6 +1,6 @@
 {
   "charts": [],
-  "content": "[{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Configuration</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Settings\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS UOM Mapping\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Tax Mapping\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Invoicing</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Order\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Delivery Note\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Stock Movements</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Receipt\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Entry\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Reconciliation\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Bulk Submission\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Submission Log\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Log\",\"col\":3}}]",
+  "content": "[{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>EFRIS Configuration</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"UOM Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"TaxCode Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Exchange Rate Sync\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Invoicing</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Order\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Delivery Note\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Stock Movements</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Receipt\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Entry\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Reconciliation\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports & Logs</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Bulk Submission\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Submission Log\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Log\",\"col\":3}}]",
   "doctype": "Workspace",
   "hide_custom": 0,
   "is_hidden": 0,
@@ -16,26 +16,38 @@
   "shortcuts": [
     {
       "color": "Blue",
-      "doc_view": "",
+      "doc_view": "List",
       "doctype": "EFRIS Settings",
-      "label": "EFRIS Settings",
+      "label": "EFRIS Setting",
       "link_to": "EFRIS Settings",
+      "name": "EFRIS Setting",
       "type": "DocType"
     },
     {
       "color": "Blue",
-      "doc_view": "",
+      "doc_view": "List",
       "doctype": "EFRIS UOM Mapping",
-      "label": "EFRIS UOM Mapping",
+      "label": "UOM Setting",
       "link_to": "EFRIS UOM Mapping",
+      "name": "UOM Setting",
       "type": "DocType"
     },
     {
       "color": "Blue",
-      "doc_view": "",
+      "doc_view": "List",
       "doctype": "EFRIS Tax Mapping",
-      "label": "EFRIS Tax Mapping",
+      "label": "TaxCode Setting",
       "link_to": "EFRIS Tax Mapping",
+      "name": "TaxCode Setting",
+      "type": "DocType"
+    },
+    {
+      "color": "Blue",
+      "doc_view": "List",
+      "doctype": "EFRIS Settings",
+      "label": "Exchange Rate Sync",
+      "link_to": "EFRIS Settings",
+      "name": "Exchange Rate Sync",
       "type": "DocType"
     },
     {
@@ -44,6 +56,7 @@
       "doctype": "Sales Invoice",
       "label": "Sales Invoice",
       "link_to": "Sales Invoice",
+      "name": "Sales Invoice",
       "type": "DocType"
     },
     {
@@ -52,6 +65,7 @@
       "doctype": "Sales Order",
       "label": "Sales Order",
       "link_to": "Sales Order",
+      "name": "Sales Order",
       "type": "DocType"
     },
     {
@@ -60,6 +74,7 @@
       "doctype": "Delivery Note",
       "label": "Delivery Note",
       "link_to": "Delivery Note",
+      "name": "Delivery Note",
       "type": "DocType"
     },
     {
@@ -68,6 +83,7 @@
       "doctype": "Purchase Receipt",
       "label": "Purchase Receipt",
       "link_to": "Purchase Receipt",
+      "name": "Purchase Receipt",
       "type": "DocType"
     },
     {
@@ -76,6 +92,7 @@
       "doctype": "Stock Entry",
       "label": "Stock Entry",
       "link_to": "Stock Entry",
+      "name": "Stock Entry",
       "type": "DocType"
     },
     {
@@ -84,6 +101,7 @@
       "doctype": "Stock Reconciliation",
       "label": "Stock Reconciliation",
       "link_to": "Stock Reconciliation",
+      "name": "Stock Reconciliation",
       "type": "DocType"
     },
     {
@@ -91,6 +109,7 @@
       "doc_view": "",
       "label": "EFRIS Bulk Submission",
       "link_to": "EFRIS Bulk Submission",
+      "name": "EFRIS Bulk Submission",
       "type": "Report"
     },
     {
@@ -98,6 +117,7 @@
       "doc_view": "",
       "label": "EFRIS Submission Log",
       "link_to": "EFRIS Submission Log",
+      "name": "EFRIS Submission Log",
       "type": "Report"
     },
     {
@@ -106,6 +126,7 @@
       "doctype": "EFRIS Log",
       "label": "EFRIS Log",
       "link_to": "EFRIS Log",
+      "name": "EFRIS Log",
       "type": "DocType"
     }
   ],

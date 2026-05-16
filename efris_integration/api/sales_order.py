@@ -21,7 +21,7 @@ from efris_integration.api.invoice import (
     _seller_details,
     _save_result,
 )
-from efris_integration.utils.helpers import get_customer_efris_fields
+from efris_integration.utils.helpers import get_customer_efris_fields, get_efris_settings
 
 
 # ─── Sales Order → T109 ───────────────────────────────────────────────────
@@ -34,7 +34,7 @@ def submit_sales_order(order_name: str) -> dict:
     if doc.get("efris_invoice_id"):
         frappe.throw(f"Already submitted to EFRIS: {doc.efris_invoice_id}")
 
-    settings = frappe.get_single("EFRIS Settings")
+    settings = get_efris_settings(doc.company)
     return _post_t109(
         doc, settings,
         "Sales Order", order_name,
@@ -53,7 +53,7 @@ def submit_delivery_note(delivery_name: str) -> dict:
     if doc.get("efris_invoice_id"):
         frappe.throw(f"Already submitted to EFRIS: {doc.efris_invoice_id}")
 
-    settings = frappe.get_single("EFRIS Settings")
+    settings = get_efris_settings(doc.company)
     return _post_t109(
         doc, settings,
         "Delivery Note", delivery_name,
@@ -72,12 +72,13 @@ def _post_t109(
     use_gross: bool,
     use_price: bool,
 ) -> dict:
-    client = EFRISClient()
-    buyer = get_customer_efris_fields(doc.customer)
+    client = EFRISClient(company=doc.company)
+    buyer  = get_customer_efris_fields(doc.customer)
     goods_details, tax_details, summary = _build_goods_and_tax(
         doc, settings,
         use_gross=use_gross,
         use_price=use_price,
+        company=doc.company,
     )
 
     # If Delivery Note, link to the source Sales Order's EFRIS Invoice ID

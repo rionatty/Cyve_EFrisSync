@@ -50,9 +50,12 @@ doc_events = {
 # ─── Scheduled Tasks ───────────────────────────────────────────────────────
 scheduler_events = {
     "daily": [
-        "efris_integration.api.exchange_rate.sync_exchange_rates",
+        # Fetches today's URA exchange rates for ALL configured companies.
+        "efris_integration.api.exchange_rate.sync_exchange_rates_all_companies",
     ],
     "hourly": [
+        # Refreshes the EFRIS session AES key for ALL configured companies
+        # whose session key file is older than 7.5 hours.
         "efris_integration.api.auth.refresh_session_if_needed",
     ],
 }

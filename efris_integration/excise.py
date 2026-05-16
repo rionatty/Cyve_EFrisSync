@@ -136,8 +136,9 @@ def recalculate_excise(doctype: str, docname: str) -> dict:
     import frappe
     from efris_integration.utils.helpers import get_item_efris_fields
 
+    from efris_integration.utils.helpers import get_efris_settings
     doc = frappe.get_doc(doctype, docname)
-    settings = frappe.get_single("EFRIS Settings")
+    settings = get_efris_settings(doc.company)
 
     total_excise = 0.0
     for line in doc.items:
