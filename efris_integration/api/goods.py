@@ -13,6 +13,7 @@ from efris_integration.api.base import EFRISClient, EFRISAPIError
 from efris_integration.api.session import (
     SESSION_ERRORS,
     ensure_session,
+    refresh_session,
     handle_session_error,
 )
 from efris_integration.utils.helpers import log_efris
@@ -71,23 +72,46 @@ def _register_goods(item, company: str) -> dict:
         result = _call_t130(client, payload, item.name)
 
     except EFRISAPIError as exc:
-        if exc.code in SESSION_ERRORS:
-            # Session / key mismatch — clear cache, log, and throw a clean message.
-            # No auto-retry: matches SAP B1 behaviour (show error, user fixes key).
+        if exc.code not in SESSION_ERRORS:
+            _log_item("Item", item.name, "T130", payload, {}, "Failed",
+                      f"[{exc.code}] {exc.message}")
+            frappe.throw(
+                f"EFRIS T130 failed [<b>{exc.code}</b>]: {exc.message}",
+                title="EFRIS T130 Error",
+            )
+
+        # Session stale — refresh via T104 (no T103, safe) and retry once.
+        # Mirrors T126: auto-refresh on first stale-key hit, fail on second.
+        frappe.logger("efris").info(
+            f"T130 [{exc.code}] {item.name} [{company}] — session stale, refreshing."
+        )
+        _log_item("Item", item.name, "T130", payload, {}, "Failed",
+                  f"Session stale [{exc.code}] — refreshing (T104) and retrying")
+
+        try:
+            refresh_session(client, company)
+        except Exception as ref_exc:
+            _log_item("Item", item.name, "T130", payload, {}, "Failed",
+                      f"Session refresh failed: {ref_exc}")
             handle_session_error("T130", company, exc, "Item", item.name)
 
-        # Business error from EFRIS
-        _log_item("Item", item.name, "T130", payload, {}, "Failed",
-                  f"[{exc.code}] {exc.message}")
-        frappe.throw(
-            f"EFRIS T130 failed [<b>{exc.code}</b>]: {exc.message}",
-            title="EFRIS T130 Error",
-        )
+        try:
+            result = _call_t130(client, payload, item.name)
+        except EFRISAPIError as exc2:
+            handle_session_error("T130", company, exc2, "Item", item.name)
 
-    # Success — store returned goodsId
-    goods_id = (
-        result.get("goodsId") or result.get("GoodsId") or result.get("id") or ""
-    )
+    # Success — store returned goodsId.
+    # EFRIS T130 returns a list; pick the first item's goodsId.
+    goods_id = ""
+    if isinstance(result, list) and result:
+        first = result[0] if isinstance(result[0], dict) else {}
+        goods_id = (
+            first.get("goodsId") or first.get("GoodsId") or first.get("id") or ""
+        )
+    elif isinstance(result, dict):
+        goods_id = (
+            result.get("goodsId") or result.get("GoodsId") or result.get("id") or ""
+        )
     if goods_id:
         frappe.db.set_value("Item", item.name, "efris_reference_no", str(goods_id))
         frappe.db.commit()
@@ -103,9 +127,9 @@ def _register_goods(item, company: str) -> dict:
 
 
 def _call_t130(client: EFRISClient, payload: dict, doc_name: str) -> dict:
-    # T130 requires AES encryption + RSA signature (error 39 if signature missing).
+    # T130 spec: request body is an array [{...}]. AES encrypted + RSA signed.
     return client.call(
-        "T130", payload=payload,
+        "T130", payload=[payload],
         encrypt=True, sign=True,
         doc_type="Item", doc_name=doc_name,
     )
@@ -139,18 +163,31 @@ def _modify_goods(item, company: str) -> dict:
         result = _call_t131(client, payload, item.name)
 
     except EFRISAPIError as exc:
-        if exc.code in SESSION_ERRORS:
-            # Session / key mismatch — clear cache, log, and throw a clean message.
-            # No auto-retry: matches SAP B1 behaviour (show error, user fixes key).
+        if exc.code not in SESSION_ERRORS:
+            _log_item("Item", item.name, "T131", payload, {}, "Failed",
+                      f"[{exc.code}] {exc.message}")
+            frappe.throw(
+                f"EFRIS T131 failed [<b>{exc.code}</b>]: {exc.message}",
+                title="EFRIS T131 Error",
+            )
+
+        frappe.logger("efris").info(
+            f"T131 [{exc.code}] {item.name} [{company}] — session stale, refreshing."
+        )
+        _log_item("Item", item.name, "T131", payload, {}, "Failed",
+                  f"Session stale [{exc.code}] — refreshing (T104) and retrying")
+
+        try:
+            refresh_session(client, company)
+        except Exception as ref_exc:
+            _log_item("Item", item.name, "T131", payload, {}, "Failed",
+                      f"Session refresh failed: {ref_exc}")
             handle_session_error("T131", company, exc, "Item", item.name)
 
-        # Business error from EFRIS
-        _log_item("Item", item.name, "T131", payload, {}, "Failed",
-                  f"[{exc.code}] {exc.message}")
-        frappe.throw(
-            f"EFRIS T131 failed [<b>{exc.code}</b>]: {exc.message}",
-            title="EFRIS T131 Error",
-        )
+        try:
+            result = _call_t131(client, payload, item.name)
+        except EFRISAPIError as exc2:
+            handle_session_error("T131", company, exc2, "Item", item.name)
 
     _log_item("Item", item.name, "T131", payload, result, "Success")
 
@@ -160,9 +197,9 @@ def _modify_goods(item, company: str) -> dict:
 
 
 def _call_t131(client: EFRISClient, payload: dict, doc_name: str) -> dict:
-    # T131 requires AES encryption + RSA signature (same as T130).
+    # T131 spec: request body is an array [{...}]. AES encrypted + RSA signed.
     return client.call(
-        "T131", payload=payload,
+        "T131", payload=[payload],
         encrypt=True, sign=True,
         doc_type="Item", doc_name=doc_name,
     )
@@ -194,28 +231,34 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
     raw_desc   = item.get("description") or ""
     plain_desc = re.sub(r"<[^>]+>", " ", raw_desc).strip()[:200]
 
+    # All numeric fields are sent as strings per EFRIS T130 spec.
+    # currency: T115 currencyType code — UGX = "101"
+    have_piece = yn(item.get("efris_have_piece_unit"))
+    have_excise = yn(item.get("efris_have_excise_tax"))
+
+    piece_uom = str(item.get("efris_piece_uom") or "")
+
     payload = {
-        "goodsCode":              str(item.item_code or ""),
-        "goodsName":              str(item.item_name or item.item_code or ""),
-        "measureUnit":            uom_code,
-        "unitPrice":              float(item.get("efris_unit_price") or 0),
-        "currency":               "UGX",
-        "commodityCategoryId":    str(item.get("efris_goods_category_id") or ""),
-        "haveExciseTax":          yn(item.get("efris_have_excise_tax")),
-        "description":            plain_desc,
-        "stockPrewarning":        float(item.get("efris_stock_prewarning") or 0),
-        "pieceMeasureUnit":       str(item.get("efris_piece_uom") or ""),
-        "havePieceUnit":          yn(item.get("efris_have_piece_unit")),
-        "pieceUnitPrice":         float(item.get("efris_piece_unit_price") or 0),
-        "packageScaledValue":     0,
-        "pieceScaledValue":       float(item.get("efris_piece_scaled_value") or 0),
-        "exciseDutyCategoryCode": str(item.get("efris_excise_duty_category") or ""),
-        "exciseUnitPrice":        float(item.get("efris_excise_rate_usd") or 0),
-        "exciseRatio":            float(item.get("efris_excise_rate") or 0),
-        "exciseDutyCode":         str(item.get("efris_excise_duty_category") or ""),
-        "goodsTypeCode":          goods_type_code,
-        "remarks":                str(item.get("efris_item_remark") or ""),
-        "operationType":          "101" if operation == "Add" else "102",
+        "operationType":      "101" if operation == "Add" else "102",
+        "goodsName":          str(item.item_name or item.item_code or ""),
+        "goodsCode":          str(item.item_code or ""),
+        "measureUnit":        uom_code,
+        "unitPrice":          str(float(item.get("efris_unit_price") or 0)),
+        "currency":           "101",                  # UGX per T115 currencyType
+        "commodityCategoryId": str(item.get("efris_goods_category_id") or ""),
+        "haveExciseTax":      have_excise,
+        "description":        plain_desc,
+        "stockPrewarning":    str(float(item.get("efris_stock_prewarning") or 0)),
+        "pieceMeasureUnit":   piece_uom if have_piece == "101" else "",
+        "havePieceUnit":      have_piece,
+        "pieceUnitPrice":     str(float(item.get("efris_piece_unit_price") or 0)) if have_piece == "101" else "",
+        "packageScaledValue": "1",
+        "pieceScaledValue":   str(float(item.get("efris_piece_scaled_value") or 0)) if have_piece == "101" else "",
+        "exciseDutyCode":     str(item.get("efris_excise_duty_category") or "") if have_excise == "101" else "",
+        "haveOtherUnit":      "102",                  # no other unit
+        "goodsTypeCode":      goods_type_code,
+        "haveCustomsUnit":    "102",                  # no customs unit (required field)
+        "remarks":            str(item.get("efris_item_remark") or ""),
     }
 
     if operation == "Update":

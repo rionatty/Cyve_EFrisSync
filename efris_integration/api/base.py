@@ -49,7 +49,7 @@ class EFRISClient:
     def call(
         self,
         interface_code: str,
-        payload: dict | None = None,
+        payload: "dict | list | None" = None,
         *,
         doc_type: str = "",
         doc_name: str = "",
