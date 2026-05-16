@@ -270,30 +270,6 @@ def try_decrypt_private_key(
 
     tried: list[str] = []
 
-    # ── 0. OTP-based (when keyTable is absent, EFRIS uses OTP as AES key) ────
-    if otp:
-        otp_bytes = otp.strip().encode("utf-8")
-        # OTP padded to 16 bytes with zeros (most common)
-        otp_key = (otp_bytes + b"\x00" * 16)[:16]
-        result  = _try_decrypt(f"otp[:{16}]", otp_key)
-        if result:
-            return result
-        tried.append(f"otp-pad16")
-
-        # OTP padded to 32 bytes
-        otp_key32 = (otp_bytes + b"\x00" * 32)[:32]
-        result = _try_decrypt("otp-pad32", otp_key32)
-        if result:
-            return result
-        tried.append("otp-pad32")
-
-        # OTP repeated to fill 16 bytes (e.g. "100983" × 2 + "1009" → 16 bytes)
-        otp_rep = (otp_bytes * 3)[:16]
-        result  = _try_decrypt("otp-repeat16", otp_rep)
-        if result:
-            return result
-        tried.append("otp-repeat16")
-
     # ── 1. keyTable (official URA white-box key) ──────────────────────────────
     if key_table:
         kt_clean = key_table.strip().rstrip("=")

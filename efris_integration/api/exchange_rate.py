@@ -154,15 +154,19 @@ def _call_t126(client: EFRISClient) -> dict:
 
 def _refresh_session(client: EFRISClient):
     """
-    Renew the EFRIS session: T103 (sign-in) → T104 (new AES session key).
-    Only the session AES key expires — the private key (T102) stays valid.
-    Resets the cached AES key so the next T126 call reads the fresh key from file.
+    Renew the EFRIS session: T103 → T104 (in this order).
+    T103 must run BEFORE T104 — calling T103 after T104 resets the server
+    session and invalidates the key that was just obtained.
     """
-    from efris_integration.api.auth import get_symmetric_key
-    # T103 (sign-in) is optional per URA guide and must NOT be called during
-    # refresh — it resets the EFRIS session, invalidating the T104 AES key.
-    get_symmetric_key() # T104 only — get fresh session AES key
-    client._aes_key = None   # force reload from SessionAESKey.txt on next call
+    from efris_integration.api.auth import sign_in, get_symmetric_key
+
+    try:
+        sign_in()       # T103 first — settle the session
+    except Exception:
+        pass            # non-fatal
+
+    get_symmetric_key()      # T104 — get fresh AES key after T103
+    client._aes_key = None   # force reload from file on next call
 
 
 def _extract_rate_list(result) -> list:

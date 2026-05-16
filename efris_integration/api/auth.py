@@ -75,10 +75,7 @@ def client_init() -> dict:
     client   = EFRISClient()
     settings = client.settings
 
-    # Generate OTP — sent in request so EFRIS can use it to encrypt the response
-    otp = str(random.randint(100000, 999999))
-
-    result = client.call("T102", payload={"otp": otp}, encrypt=False)
+    result = client.call("T102", encrypt=False)
 
     # Exact field names from T102 docs
     server_pub_key     = result.get("serverPubKey", "")
@@ -99,7 +96,7 @@ def client_init() -> dict:
         )
 
     frappe.logger("efris").info(
-        f"T102  otp={otp}  keyTable={'present' if key_table else 'MISSING'}\n"
+        f"T102  keyTable={'present' if key_table else 'MISSING'}\n"
         f"T102  clientPriKey[:80] = {encrypted_priv_key[:80]}\n"
         f"T102  serverPubKey[:60] = {server_pub_key[:60]}"
     )
@@ -118,7 +115,6 @@ def client_init() -> dict:
             taxpayer_id=settings.taxpayer_id or "",
             tin=settings.tin or "",
             key_table=key_table,
-            otp=otp,
             device_no=settings.device_no or "",
         )
     except ValueError as exc:
@@ -546,26 +542,32 @@ def diagnose_keys() -> dict:
 @frappe.whitelist()
 def full_initialise() -> dict:
     """
-    T101 → T102 → T103 → T104 in one call.
-    Mirrors the SAP B1 'Test Connection' + initialise flow.
+    T101 → T103 → T104 in one call.
+
+    CRITICAL ORDER: T103 MUST run before T104.
+    On the EFRIS server, calling T103 after T104 resets the session and
+    invalidates the AES session key that was just obtained from T104.
+    Running T103 first (to initialise/sign-in) and then T104 (to fetch
+    the fresh session key) guarantees the saved key is valid.
     """
     results = {}
 
-    frappe.publish_progress(10,  title="EFRIS Init", description="T101 — Testing connection…")
+    frappe.publish_progress(10, title="EFRIS Init", description="T101 — Testing connection…")
     results["server_time"] = get_server_time()
 
-    # URA guide order: T104 (AES key) → T103 (optional sign-in)
-    frappe.publish_progress(50,  title="EFRIS Init", description="T104 — Getting session key…")
-    results["t104"] = get_symmetric_key()
-
-    frappe.publish_progress(80,  title="EFRIS Init", description="T103 — Getting device info…")
+    # T103 FIRST — sign in / get device info (may reset the EFRIS session)
+    frappe.publish_progress(40, title="EFRIS Init", description="T103 — Sign in…")
     results["t103"] = sign_in()
+
+    # T104 LAST — get fresh session AES key after T103 has settled the session
+    frappe.publish_progress(75, title="EFRIS Init", description="T104 — Getting session key…")
+    results["t104"] = get_symmetric_key()
 
     frappe.publish_progress(100, title="EFRIS Init", description="Done ✅")
 
+    t104_bits = results["t104"].get("key_bits", "?")
     frappe.msgprint(
-        f"🎉 EFRIS initialised!\n"
-        f"Server time: {results['server_time']}\n"
+        f"🎉 EFRIS initialised! Server time: {results['server_time']}<br>"
         f"All keys saved to files. Ready to submit documents.",
         indicator="green",
         title="EFRIS Initialised",
