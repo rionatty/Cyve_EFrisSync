@@ -295,7 +295,15 @@ def get_symmetric_key(company: str) -> dict:
 
         client._aes_key = None
 
-    # ── Step 1: call T104 to get fresh passowrdDes ────────────────────────
+    # ── Step 1: call T104 to get fresh passowrdDes + sign ────────────────
+    #
+    # EFRIS API doc (T104 response):
+    #   passowrdDes — "Encrypted symmetric key"  (RSA-encrypted with client public key)
+    #   sign        — "Signature value"           (also returned, may carry the raw key)
+    #
+    # Per the EFRIS doc: "The server randomly generates an 8-bit symmetric key
+    # and a signature value for encryption."  Both fields are tried as AES key
+    # candidates because some EFRIS environments send the raw key in `sign`.
 
     t104_result = client.call("T104", encrypt=False)
 
@@ -304,22 +312,33 @@ def get_symmetric_key(company: str) -> dict:
         or t104_result.get("passwordDes", "")
     ).strip()
 
-    if not encrypted_aes_b64:
+    # `sign` field — EFRIS API doc says T104 returns this alongside passowrdDes.
+    # In some environments it IS the raw AES session key (base64 or plain string).
+    sign_field = (
+        t104_result.get("sign", "")
+        or t104_result.get("Sign", "")
+        or t104_result.get("signature", "")
+    ).strip()
+
+    if not encrypted_aes_b64 and not sign_field:
         frappe.log_error(
             f"T104 keys: {list(t104_result.keys())}\nFull: {t104_result}",
             "EFRIS T104 Unexpected Response",
         )
         raise frappe.ValidationError(
-            f"T104: no passowrdDes in response. Keys: {list(t104_result.keys())}"
+            f"T104: no passowrdDes/sign in response. Keys: {list(t104_result.keys())}"
         )
 
-    raw = _b64.b64decode(encrypted_aes_b64.rstrip("=") + "==")
+    raw = _b64.b64decode(encrypted_aes_b64.rstrip("=") + "==") if encrypted_aes_b64 else b""
     frappe.logger("efris").info(
-        f"T104 [{company}] passowrdDes: {len(raw)} bytes  first16={raw[:16].hex()}"
+        f"T104 [{company}]\n"
+        f"  passowrdDes : {len(raw)} bytes  hex={raw[:16].hex() if raw else '(empty)'}\n"
+        f"  sign        : '{sign_field[:80]}' ({len(sign_field)} chars)\n"
+        f"  all keys    : {list(t104_result.keys())}"
     )
 
     # ── Build every plausible candidate AES key ────────────────────────────
-    candidates = _build_aes_key_candidates(raw, private_key_pem)
+    candidates = _build_aes_key_candidates(raw, private_key_pem, sign_field=sign_field)
     frappe.logger("efris").info(
         f"T104 [{company}]: {len(candidates)} AES key candidates to probe: "
         + ", ".join(f"[{l}]={k.hex()[:16]}…" for l, k in candidates)
@@ -456,12 +475,24 @@ def get_symmetric_key(company: str) -> dict:
         )
 
 
-def _build_aes_key_candidates(raw_passowrdDes: bytes, private_key_pem: str) -> list:
+def _build_aes_key_candidates(
+    raw_passowrdDes: bytes,
+    private_key_pem: str,
+    sign_field: str = "",
+) -> list:
     """
-    Build every plausible AES session key from T104 passowrdDes.
-    Ordered from most-likely (RSA decrypt) to least-likely (raw slices).
+    Build every plausible AES session key from T104 response fields.
+    Ordered from most-likely (RSA decrypt / sign field) to least-likely (raw slices).
     All entries have key length in (16, 24, 32) bytes.
+
+    EFRIS API doc T104 returns TWO fields:
+      passowrdDes — "Encrypted symmetric key"  (RSA-encrypted with client public key)
+      sign        — "Signature value"           (per doc, also carries the raw key in
+                                                 some EFRIS environments / configurations)
+    The `sign_field` candidates are tried FIRST so that environments where `sign`
+    is the raw AES key are handled even when the private key doesn't match.
     """
+    import base64 as _b64
     import hashlib
     from Crypto.Cipher import PKCS1_v1_5, PKCS1_OAEP as _OAEP
     from efris_integration.utils.encryption import _import_rsa_key
@@ -474,8 +505,49 @@ def _build_aes_key_candidates(raw_passowrdDes: bytes, private_key_pem: str) -> l
             seen.add(key)
             out.append((label, key))
 
-    # 1. RSA PKCS1v1.5 (official URA — most likely to be correct)
-    if private_key_pem:
+    # ── 1. `sign` field candidates ────────────────────────────────────────
+    # Try these first: in some EFRIS environments the `sign` field contains
+    # the raw session AES key (base64-encoded, hex, or raw UTF-8 bytes).
+    if sign_field:
+        sign_bytes = sign_field.encode("utf-8")
+
+        # 1a. sign decoded as standard base64
+        for variant in (
+            sign_field,
+            sign_field.replace("-", "+").replace("_", "/"),
+        ):
+            try:
+                decoded = _b64.b64decode(variant + "=" * (-len(variant) % 4))
+                _add("sign-b64", decoded)
+                if len(decoded) >= 16:
+                    _add("sign-b64-first16", decoded[:16])
+                if len(decoded) >= 24:
+                    _add("sign-b64-first24", decoded[:24])
+                if len(decoded) >= 32:
+                    _add("sign-b64-first32", decoded[:32])
+            except Exception:
+                pass
+
+        # 1b. sign as hex string
+        if len(sign_field) in (32, 48, 64):
+            try:
+                _add("sign-hex", bytes.fromhex(sign_field))
+            except ValueError:
+                pass
+
+        # 1c. sign raw UTF-8 bytes padded/truncated to 16/24/32 bytes
+        for size in (16, 24, 32):
+            if len(sign_bytes) >= size:
+                _add(f"sign-raw{size}", sign_bytes[:size])
+            elif sign_bytes:
+                # zero-pad to target size
+                _add(f"sign-rawpad{size}", sign_bytes.ljust(size, b"\x00"))
+
+        # 1d. MD5 of sign field (16 bytes — commonly used in Chinese payment systems)
+        _add("sign-md5", hashlib.md5(sign_bytes).digest())
+
+    # ── 2. RSA PKCS1v1.5 (official URA — should be correct when private key matches) ──
+    if private_key_pem and raw_passowrdDes:
         try:
             rsa_key  = _import_rsa_key(private_key_pem)
             sentinel = object()
@@ -494,8 +566,8 @@ def _build_aes_key_candidates(raw_passowrdDes: bytes, private_key_pem: str) -> l
         except Exception as exc:
             frappe.logger("efris").warning(f"PKCS1v1.5 exception: {exc}")
 
-    # 2. RSA OAEP
-    if private_key_pem:
+    # ── 3. RSA OAEP ───────────────────────────────────────────────────────
+    if private_key_pem and raw_passowrdDes:
         try:
             rsa_key = _import_rsa_key(private_key_pem)
             oaep    = _OAEP.new(rsa_key).decrypt(raw_passowrdDes)
@@ -508,19 +580,20 @@ def _build_aes_key_candidates(raw_passowrdDes: bytes, private_key_pem: str) -> l
         except Exception as exc:
             frappe.logger("efris").warning(f"OAEP exception: {exc}")
 
-    # 3. Raw slices of passowrdDes (if EFRIS sends AES key unencrypted or
-    #    uses a non-RSA encoding in some environments)
+    # ── 4. Raw slices of passowrdDes (if EFRIS sends AES key unencrypted
+    #       or uses a non-RSA encoding in some environments) ────────────
     r = raw_passowrdDes
-    _add("raw-first16", r[:16])
-    _add("raw-first24", r[:24])
-    _add("raw-first32", r[:32])
-    _add("raw-last16",  r[-16:])
+    if r:
+        _add("raw-first16", r[:16])
+        _add("raw-first24", r[:24])
+        _add("raw-first32", r[:32])
+        _add("raw-last16",  r[-16:])
 
-    # 4. Cryptographic digests of passowrdDes (some EFRIS variants)
-    _add("md5",            hashlib.md5(r).digest())
-    _add("sha256-first16", hashlib.sha256(r).digest()[:16])
-    _add("sha256-last16",  hashlib.sha256(r).digest()[-16:])
-    _add("sha256-full",    hashlib.sha256(r).digest())
+        # ── 5. Cryptographic digests of passowrdDes (some EFRIS variants) ──
+        _add("md5",            hashlib.md5(r).digest())
+        _add("sha256-first16", hashlib.sha256(r).digest()[:16])
+        _add("sha256-last16",  hashlib.sha256(r).digest()[-16:])
+        _add("sha256-full",    hashlib.sha256(r).digest())
 
     return out
 
