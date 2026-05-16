@@ -67,6 +67,8 @@ def sync_exchange_rates(
     total_updated  = 0
     # Each entry: (date_str, error_code) so we can show reasons in the result
     failed_dates: list[tuple[str, str]] = []
+    # Collect every saved rate: (date, currency, rate_float) for the result dialog
+    saved_rates: list[tuple[str, str, float]] = []
     current        = d_from
 
     days_total = (d_to - d_from).days + 1
@@ -147,6 +149,7 @@ def sync_exchange_rates(
                 continue
 
             inserted = _upsert_rate(currency, rate_float, erpnext_date)
+            saved_rates.append((erpnext_date, currency, rate_float))
             if inserted:
                 total_inserted += 1
             else:
@@ -159,10 +162,43 @@ def sync_exchange_rates(
     # ── Build result message ───────────────────────────────────────────────
     days_done = days_total - len(failed_dates)
     msg = (
-        f"✅ URA rates updated for {days_done}/{days_total} day(s): "
-        f"{total_inserted} added, {total_updated} updated."
+        f"<b>URA Exchange Rates — {company}</b><br>"
+        f"Period: {from_date} → {to_date}<br><br>"
     )
 
+    # ── Rates table ────────────────────────────────────────────────────────
+    if saved_rates:
+        # Group by date for clean display
+        from collections import defaultdict
+        by_date: dict = defaultdict(list)
+        for ds, cur, rt in saved_rates:
+            by_date[ds].append((cur, rt))
+
+        for ds in sorted(by_date.keys()):
+            msg += f"<b>{ds}</b><br>"
+            msg += "<table style='width:100%;border-collapse:collapse;margin-bottom:8px'>"
+            msg += (
+                "<tr style='background:#f5f5f5'>"
+                "<th style='text-align:left;padding:4px 8px'>Currency</th>"
+                "<th style='text-align:right;padding:4px 8px'>Rate (1 unit → UGX)</th>"
+                "<th style='text-align:center;padding:4px 8px'>Status</th>"
+                "</tr>"
+            )
+            for cur, rt in sorted(by_date[ds]):
+                msg += (
+                    f"<tr style='border-top:1px solid #eee'>"
+                    f"<td style='padding:4px 8px'><b>{cur}</b></td>"
+                    f"<td style='text-align:right;padding:4px 8px'>{rt:,.2f}</td>"
+                    f"<td style='text-align:center;padding:4px 8px'>✅</td>"
+                    f"</tr>"
+                )
+            msg += "</table>"
+
+        msg += f"<b>{total_inserted}</b> added, <b>{total_updated}</b> updated.<br>"
+    else:
+        msg += "No rates were saved.<br>"
+
+    # ── Skipped dates ──────────────────────────────────────────────────────
     if failed_dates:
         skip_lines = []
         session_key_error = False
@@ -175,24 +211,29 @@ def sync_exchange_rates(
 
         if session_key_error:
             msg += (
-                "<br><br>❌ <b>Session key issue detected</b> — EFRIS cannot decrypt "
-                "the request (error 15 = stale AES key).<br>"
+                "<br><br>❌ <b>Session key issue (error 15)</b> — EFRIS cannot decrypt "
+                "the request because the Session AES Key is stale.<br>"
                 "Fix: paste the current <b>SessionAESKey.txt</b> content from the "
                 "SAP B1 server into <b>EFRIS Settings → Session AES Key</b> and save."
             )
         elif any(c == "EMPTY" for _, c in failed_dates):
             msg += (
-                "<br><br>ℹ️ EFRIS returned no rates for these dates — "
-                "URA may not publish rates for today until end of business day. "
-                "Try fetching for yesterday or a past date range."
+                "<br><br>ℹ️ EFRIS returned no rates for these dates. "
+                "URA may not publish today's rates until end of business day — "
+                "try fetching for yesterday."
             )
 
-    frappe.msgprint(msg, indicator="green" if not failed_dates else "orange")
+    frappe.msgprint(
+        msg,
+        title="URA Exchange Rates",
+        indicator="green" if not failed_dates else "orange",
+    )
     return {
         "inserted": total_inserted,
         "updated":  total_updated,
         "failed":   [ds for ds, _ in failed_dates],
         "days":     days_done,
+        "rates":    [{"date": ds, "currency": cur, "rate": rt} for ds, cur, rt in saved_rates],
     }
 
 
