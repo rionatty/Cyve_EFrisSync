@@ -254,7 +254,7 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
         "pieceMeasureUnit":   piece_uom if have_piece == "101" else "",
         "havePieceUnit":      have_piece,
         "pieceUnitPrice":     str(float(item.get("efris_piece_unit_price") or 0)) if have_piece == "101" else "",
-        "packageScaledValue": "1",
+        "packageScaledValue": "1" if have_piece == "101" else "",
         "pieceScaledValue":   str(float(item.get("efris_piece_scaled_value") or 0)) if have_piece == "101" else "",
         "exciseDutyCode":     str(item.get("efris_excise_duty_category") or "") if have_excise == "101" else "",
         "haveOtherUnit":      "102",                  # no other unit
