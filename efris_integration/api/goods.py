@@ -13,8 +13,7 @@ from efris_integration.api.base import EFRISClient, EFRISAPIError
 from efris_integration.api.session import (
     SESSION_ERRORS,
     ensure_session,
-    refresh_session,
-    throw_session_key_error,
+    handle_session_error,
 )
 from efris_integration.utils.helpers import log_efris
 
@@ -72,39 +71,18 @@ def _register_goods(item, company: str) -> dict:
         result = _call_t130(client, payload, item.name)
 
     except EFRISAPIError as exc:
-        if exc.code not in SESSION_ERRORS:
-            # Business error from EFRIS — already logged by base.py; add module log
-            _log_item("Item", item.name, "T130", payload, {}, "Failed",
-                      f"[{exc.code}] {exc.message}")
-            frappe.throw(
-                f"EFRIS T130 failed [<b>{exc.code}</b>]: {exc.message}",
-                title="EFRIS T130 Error",
-            )
+        if exc.code in SESSION_ERRORS:
+            # Session / key mismatch — clear cache, log, and throw a clean message.
+            # No auto-retry: matches SAP B1 behaviour (show error, user fixes key).
+            handle_session_error("T130", company, exc, "Item", item.name)
 
-        # Session stale — refresh once and retry
-        frappe.logger("efris").info(
-            f"T130 [{exc.code}] {item.name} [{company}] — session stale, refreshing."
-        )
+        # Business error from EFRIS
         _log_item("Item", item.name, "T130", payload, {}, "Failed",
-                  f"Session stale [{exc.code}] — refreshing and retrying")
-
-        try:
-            refresh_session(client, company)
-        except Exception as ref_exc:
-            _log_item("Item", item.name, "T130", payload, {}, "Failed",
-                      f"Session refresh failed: {ref_exc}")
-            frappe.throw(
-                f"Session refresh failed: {ref_exc}<br><br>"
-                "Please update <b>Session AES Key</b> in <b>EFRIS Settings</b> and retry.",
-                title="EFRIS Session Error",
-            )
-
-        try:
-            result = _call_t130(client, payload, item.name)
-        except EFRISAPIError as exc2:
-            _log_item("Item", item.name, "T130", payload, {}, "Failed",
-                      f"Retry failed [{exc2.code}] {exc2.message}")
-            throw_session_key_error("T130", company, exc2.code, exc2.message)
+                  f"[{exc.code}] {exc.message}")
+        frappe.throw(
+            f"EFRIS T130 failed [<b>{exc.code}</b>]: {exc.message}",
+            title="EFRIS T130 Error",
+        )
 
     # Success — store returned goodsId
     goods_id = (
@@ -161,37 +139,18 @@ def _modify_goods(item, company: str) -> dict:
         result = _call_t131(client, payload, item.name)
 
     except EFRISAPIError as exc:
-        if exc.code not in SESSION_ERRORS:
-            _log_item("Item", item.name, "T131", payload, {}, "Failed",
-                      f"[{exc.code}] {exc.message}")
-            frappe.throw(
-                f"EFRIS T131 failed [<b>{exc.code}</b>]: {exc.message}",
-                title="EFRIS T131 Error",
-            )
+        if exc.code in SESSION_ERRORS:
+            # Session / key mismatch — clear cache, log, and throw a clean message.
+            # No auto-retry: matches SAP B1 behaviour (show error, user fixes key).
+            handle_session_error("T131", company, exc, "Item", item.name)
 
-        frappe.logger("efris").info(
-            f"T131 [{exc.code}] {item.name} [{company}] — session stale, refreshing."
-        )
+        # Business error from EFRIS
         _log_item("Item", item.name, "T131", payload, {}, "Failed",
-                  f"Session stale [{exc.code}] — refreshing and retrying")
-
-        try:
-            refresh_session(client, company)
-        except Exception as ref_exc:
-            _log_item("Item", item.name, "T131", payload, {}, "Failed",
-                      f"Session refresh failed: {ref_exc}")
-            frappe.throw(
-                f"Session refresh failed: {ref_exc}<br><br>"
-                "Please update <b>Session AES Key</b> in <b>EFRIS Settings</b> and retry.",
-                title="EFRIS Session Error",
-            )
-
-        try:
-            result = _call_t131(client, payload, item.name)
-        except EFRISAPIError as exc2:
-            _log_item("Item", item.name, "T131", payload, {}, "Failed",
-                      f"Retry failed [{exc2.code}] {exc2.message}")
-            throw_session_key_error("T131", company, exc2.code, exc2.message)
+                  f"[{exc.code}] {exc.message}")
+        frappe.throw(
+            f"EFRIS T131 failed [<b>{exc.code}</b>]: {exc.message}",
+            title="EFRIS T131 Error",
+        )
 
     _log_item("Item", item.name, "T131", payload, result, "Success")
 
