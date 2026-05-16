@@ -125,13 +125,10 @@ def _register_goods(item, company: str) -> dict:
 
 
 def _call_t130(client: EFRISClient, payload: dict, doc_name: str) -> dict:
-    # T130 goods registration: AES-encrypted but NOT RSA-signed.
-    # T126 (exchange rate) requires signing per the C# source.
-    # T130/T131 do NOT — adding sign=True causes error 15 (data decryption error)
-    # because EFRIS rejects the extra signature field on goods T-codes.
+    # T130 requires AES encryption + RSA signature (error 39 if signature missing).
     return client.call(
         "T130", payload=payload,
-        encrypt=True, sign=False,
+        encrypt=True, sign=True,
         doc_type="Item", doc_name=doc_name,
     )
 
@@ -204,10 +201,10 @@ def _modify_goods(item, company: str) -> dict:
 
 
 def _call_t131(client: EFRISClient, payload: dict, doc_name: str) -> dict:
-    # T131 modify goods: AES-encrypted, not RSA-signed (same as T130).
+    # T131 requires AES encryption + RSA signature (same as T130).
     return client.call(
         "T131", payload=payload,
-        encrypt=True, sign=False,
+        encrypt=True, sign=True,
         doc_type="Item", doc_name=doc_name,
     )
 
