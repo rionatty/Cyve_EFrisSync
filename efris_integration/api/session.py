@@ -116,35 +116,54 @@ def ensure_session(client: EFRISClient, company: str) -> None:
         pass  # no key stored at all
 
     # 3. First-run: T104 to initialise
+    # refresh_session() reloads client.settings and client._km from DB after T104,
+    # and sets client._aes_key + global cache — nothing more needed here.
     frappe.logger("efris").info(
         f"[{company}] no session key stored — running T104 to initialise"
     )
     refresh_session(client, company)
-    key = client.key_manager.get_aes_key()
-    client._aes_key = key
-    set_global_aes_key(company, key)
 
 
 def refresh_session(client: EFRISClient, company: str) -> None:
     """
     Fetch a fresh session AES key via T104 and update both DB and global cache.
 
-    Only called on true first-run (no key stored anywhere).
-    NOT called on session errors mid-operation — modules should throw and let
-    the user update the key manually (matches SAP B1 behaviour).
+    Critical: T104 uses its OWN EFRISClient instance internally to save the new key.
+    The caller's client.settings is a DIFFERENT in-memory object — it still holds
+    the OLD session_aes_key.  We must reload from DB after T104, not from the
+    stale in-memory settings, or the retry will encrypt with the old key again.
     """
     from efris_integration.api.auth import get_symmetric_key
 
     # force=True: always call T104, skip the step-0 validity probe
     get_symmetric_key(company, force=True)
 
-    # Reload from DB (auth saved the new key) and repopulate global cache
+    # ── Reload the AES key fresh from DB ──────────────────────────────────────
+    # T104 saved the new key via its own client instance (different object).
+    # client.settings and client._km are now stale — refresh them.
     client._aes_key = None
+    client._km = None  # force KeyManager rebuild with reloaded settings
+
+    try:
+        # Reload the settings document from DB to get the key T104 just wrote
+        fresh = frappe.get_doc("EFRIS Settings", client.settings.name)
+        client.settings = fresh
+    except Exception:
+        pass  # if reload fails, key_manager may still find it via db_get_value
+
     try:
         key = client.key_manager.get_aes_key()
+        client._aes_key = key
         set_global_aes_key(company, key)
-    except Exception:
-        pass
+        frappe.logger("efris").info(
+            f"[{company}] session refreshed via T104 — "
+            f"new AES key loaded ({len(key) * 8}-bit)"
+        )
+    except Exception as exc:
+        frappe.logger("efris").error(
+            f"[{company}] refresh_session: could not load new key after T104: {exc}"
+        )
+        raise
 
 
 def handle_session_error(
