@@ -149,12 +149,20 @@ def _call_t130(client: EFRISClient, payload: dict, doc_name: str) -> dict:
     )
 
 
-# ─── T131 Modify Goods ────────────────────────────────────────────────────────
+# ─── T130 Modify Goods (operationType 102) ───────────────────────────────────
 
 def _modify_goods(item, company: str) -> dict:
-    """T131 — Modify existing goods on EFRIS. Mirrors ItemMaster.cs → btnUpdate_Click()"""
+    """
+    T130 (operationType=102) — Modify existing goods on EFRIS.
+    Mirrors ItemMaster.cs → btnUpdate_Click()
+
+    EFRIS API note: T130 handles both Add (operationType=101) and Modify
+    (operationType=102).  T131 is "Goods Stock Maintain" (inventory) — a
+    completely different operation with a different payload.  Sending a
+    T130-style goods payload to T131 returns error 2066 "Illegal json format".
+    """
     # goodsId (EFRIS internal number) is optional — EFRIS also accepts goodsCode
-    # (the ERPNext item code) as the unique identifier for T131.
+    # (the ERPNext item code) as the unique identifier for the modify operation.
     goods_id = (item.get("efris_reference_no") or "").strip()
 
     client  = EFRISClient(company=company)
@@ -163,54 +171,45 @@ def _modify_goods(item, company: str) -> dict:
     try:
         ensure_session(client, company)
     except Exception as exc:
-        _log_item("Item", item.name, "T131", payload, {}, "Failed",
+        _log_item("Item", item.name, "T130", payload, {}, "Failed",
                   f"Session load failed: {exc}")
         frappe.throw(str(exc), title="EFRIS Session Error")
 
     try:
-        result = _call_t131(client, payload, item.name)
+        result = _call_t130(client, payload, item.name)
 
     except EFRISAPIError as exc:
         if exc.code not in SESSION_ERRORS:
-            _log_item("Item", item.name, "T131", payload, {}, "Failed",
+            _log_item("Item", item.name, "T130", payload, {}, "Failed",
                       f"[{exc.code}] {exc.message}")
             frappe.throw(
-                f"EFRIS T131 failed [<b>{exc.code}</b>]: {exc.message}",
-                title="EFRIS T131 Error",
+                f"EFRIS T130 (modify) failed [<b>{exc.code}</b>]: {exc.message}",
+                title="EFRIS T130 Error",
             )
 
         frappe.logger("efris").info(
-            f"T131 [{exc.code}] {item.name} [{company}] — session stale, refreshing."
+            f"T130-modify [{exc.code}] {item.name} [{company}] — session stale, refreshing."
         )
-        _log_item("Item", item.name, "T131", payload, {}, "Failed",
+        _log_item("Item", item.name, "T130", payload, {}, "Failed",
                   f"Session stale [{exc.code}] — refreshing (T104) and retrying")
 
         try:
             refresh_session(client, company)
         except Exception as ref_exc:
-            _log_item("Item", item.name, "T131", payload, {}, "Failed",
+            _log_item("Item", item.name, "T130", payload, {}, "Failed",
                       f"Session refresh failed: {ref_exc}")
-            handle_session_error("T131", company, exc, "Item", item.name)
+            handle_session_error("T130", company, exc, "Item", item.name)
 
         try:
-            result = _call_t131(client, payload, item.name)
+            result = _call_t130(client, payload, item.name)
         except EFRISAPIError as exc2:
-            handle_session_error("T131", company, exc2, "Item", item.name)
+            handle_session_error("T130", company, exc2, "Item", item.name)
 
-    _log_item("Item", item.name, "T131", payload, result, "Success")
+    _log_item("Item", item.name, "T130", payload, result, "Success")
 
     msg = f"Item <b>{item.item_code}</b> updated on EFRIS successfully."
-    frappe.msgprint(msg, title="EFRIS T131 — Goods Updated", indicator="green")
+    frappe.msgprint(msg, title="EFRIS T130 — Goods Updated", indicator="green")
     return {"status": "ok", "message": msg}
-
-
-def _call_t131(client: EFRISClient, payload: dict, doc_name: str) -> dict:
-    # T131 spec: request body is an array [{...}]. AES encrypted + RSA signed.
-    return client.call(
-        "T131", payload=[payload],
-        encrypt=True, sign=True,
-        doc_type="Item", doc_name=doc_name,
-    )
 
 
 # ─── EFRIS Log helper ─────────────────────────────────────────────────────────
