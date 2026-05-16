@@ -15,9 +15,6 @@
     "tab_connection",
     "section_api",
     "api_url",
-    "public_key_path",
-    "session_key_path",
-    "private_key_path",
     "col_conn",
     "device_no",
     "app_id",
@@ -40,6 +37,12 @@
     "branch_code",
     "col_branch",
     "industry_code",
+
+    "section_keys",
+    "private_key",
+    "col_keys",
+    "public_key",
+    "session_aes_key",
 
     "tab_settings",
     "use_uom_name",
@@ -86,24 +89,6 @@
       "reqd": 1,
       "description": "Test: https://efristest.ura.go.ug/efrisws/ws/taapp/getInformation  |  Production: https://efrisws.ura.go.ug/ws/taapp/getInformation"
     },
-    {
-      "fieldname": "public_key_path",
-      "fieldtype": "Data",
-      "label": "EFRIS Public Key Path",
-      "description": "Absolute path to PublicKey.txt on the server"
-    },
-    {
-      "fieldname": "session_key_path",
-      "fieldtype": "Data",
-      "label": "Session Key Path",
-      "description": "Absolute path to SessionAESKey.txt on the server"
-    },
-    {
-      "fieldname": "private_key_path",
-      "fieldtype": "Data",
-      "label": "Private Key Path",
-      "description": "Absolute path to PrivateKey.txt on the server"
-    },
     { "fieldname": "col_conn", "fieldtype": "Column Break" },
     {
       "fieldname": "device_no",
@@ -145,7 +130,7 @@
       "fieldtype": "Data",
       "label": "Taxpayer ID",
       "reqd": 1,
-      "description": "EFRIS Taxpayer ID (usually 1)"
+      "description": "EFRIS Taxpayer ID (usually same as TIN)"
     },
     {
       "fieldname": "legal_name",
@@ -203,6 +188,36 @@
       "options": "101\n102\n104\n105\n106\n107\n108\n109\n110\n111\n112",
       "default": "101",
       "description": "101:General | 102:Export | 104:Imported Service | 105:Telecom | 106:Stamp Duty | 107:Hotel | 108:Other | 109:Airline | 110:EDC | 111:Auction | 112:Export Service"
+    },
+
+    {
+      "fieldname": "section_keys",
+      "fieldtype": "Section Break",
+      "label": "Cryptographic Keys",
+      "description": "Paste key content directly — no file paths needed. Private Key and Session Key are filled automatically by Full Initialise."
+    },
+    {
+      "fieldname": "private_key",
+      "fieldtype": "Code",
+      "label": "Private Key",
+      "options": "Text",
+      "rows": 8,
+      "description": "Paste PrivateKey.txt content here (base64 PKCS#8 or PEM). Auto-filled by T102. Keep this confidential."
+    },
+    { "fieldname": "col_keys", "fieldtype": "Column Break" },
+    {
+      "fieldname": "public_key",
+      "fieldtype": "Code",
+      "label": "EFRIS Server Public Key",
+      "options": "Text",
+      "rows": 5,
+      "description": "Paste PublicKey.txt content here (base64 or PEM). Auto-filled by T102."
+    },
+    {
+      "fieldname": "session_aes_key",
+      "fieldtype": "Data",
+      "label": "Session AES Key (base64)",
+      "description": "Paste SessionAESKey.txt content here (base64). Auto-filled by T104 / Full Initialise."
     },
 
     { "fieldname": "tab_settings", "fieldtype": "Tab Break", "label": "Settings" },

@@ -1,20 +1,22 @@
 """
-Key Manager — reads and writes EFRIS cryptographic key FILES.
+Key Manager — reads and writes EFRIS cryptographic keys stored in the database.
 
-Mirrors exactly how SAP B1 URASetting.cs handles key paths:
-  B1 button → U_OT_EPK path → PublicKey.txt
-  B2 button → U_OT_SAK path → SessionAESKey.txt
-  B3 button → U_OT_PK  path → PrivateKey.txt
+Keys are stored directly in EFRIS Settings fields:
+  private_key      — RSA private key (base64 PKCS#8 or PEM) — Code field
+  public_key       — EFRIS server RSA public key (base64 or PEM) — Code field
+  session_aes_key  — Session AES key (base64, 16/24/32 bytes) — Data field
 
-Keys are ONLY stored in files. The path fields in EFRIS Settings
-(public_key_path, session_key_path, private_key_path) hold the
-absolute filesystem paths, exactly as in the SAP @OT_URA table.
+No file paths are used. All key content lives in the database, editable
+from the EFRIS Settings form. T102 auto-fills private_key and public_key;
+T104 auto-fills session_aes_key via db_set().
 
-No database storage of key content — this matches SAP's approach.
+To paste keys manually:
+  - private_key   : paste content of PrivateKey.txt   (base64 PKCS#8 or PEM)
+  - public_key    : paste content of PublicKey.txt     (base64 or PEM)
+  - session_aes_key: paste content of SessionAESKey.txt (base64, e.g. x/SVvBh4S49ddPNX+nXQYg==)
 """
 
 import base64
-import os
 
 import frappe
 
@@ -23,154 +25,120 @@ class KeyManager:
     def __init__(self, settings):
         self.s = settings
 
-    # ─── Server RSA Public Key  (U_OT_EPK → PublicKey.txt) ──────────────
+    # ─── Server RSA Public Key ─────────────────────────────────────────────
 
     def get_public_key(self) -> str:
-        return self._read_key_file("public_key_path", "EFRIS Public Key")
+        """Return the EFRIS server RSA public key from the database field."""
+        key = (self.s.get("public_key") or "").strip()
+        if not key:
+            raise RuntimeError(
+                "EFRIS Server Public Key is not configured in EFRIS Settings. "
+                "Click 'T102 Get Keys' to auto-fill, or paste PublicKey.txt content manually."
+            )
+        return key
 
     def save_public_key(self, pem: str):
-        self._write_key_file("public_key_path", pem)
+        """Persist server public key to the database field."""
+        val = pem.strip()
+        self.s.db_set("public_key", val, update_modified=False)
+        self.s.public_key = val   # update in-memory too
 
-    # ─── Client RSA Private Key  (U_OT_PK → PrivateKey.txt) ─────────────
+    # ─── Client RSA Private Key ────────────────────────────────────────────
 
     def get_private_key(self) -> str:
         """
-        Read the private key file exactly as SAP B1 does:
-            byte[] privateKey = Convert.FromBase64String(File.ReadAllText(path))
-            CngKey.Import(privateKey, CngKeyBlobFormat.Pkcs8PrivateBlob)
+        Return private key content from the database field.
 
-        The file contains base64 text; the decoded bytes are PKCS#8 DER.
-        _import_rsa_key() handles both plain-text PEM and base64-encoded DER,
-        so we just return the raw file content — no conversion needed here.
+        Supports:
+          • PEM format     (-----BEGIN PRIVATE KEY-----)
+          • Raw base64     PKCS#8 without headers (SAP B1 CNG export format)
 
-        Also tolerates:
-          • PEM files (-----BEGIN ... KEY-----)
-          • Raw base64 PKCS#8 with no headers  ← SAP B1 format
-          • Raw binary DER (read as bytes → base64-encode for _import_rsa_key)
+        _import_rsa_key() in encryption.py handles both formats, so we
+        just return the raw field content — no conversion needed here.
         """
-        path = self.s.get("private_key_path")
-        if not path:
-            raise RuntimeError("Private Key path is not configured in EFRIS Settings.")
-        if not __import__("os").path.isfile(path):
-            raise RuntimeError(f"Private Key file not found: {path}")
-
-        # Read raw bytes first — handles both text (PEM/base64) and binary (DER)
-        raw_bytes = _read_bytes(path)
-
-        # Try UTF-8 decode: covers PEM and base64-without-headers (SAP B1 format)
-        try:
-            return raw_bytes.decode("utf-8").strip()
-        except UnicodeDecodeError:
-            pass
-
-        # Binary DER — base64-encode so _import_rsa_key step 2 can decode it back
-        return base64.b64encode(raw_bytes).decode("ascii")
+        key = (self.s.get("private_key") or "").strip()
+        if not key:
+            raise RuntimeError(
+                "Private Key is not configured in EFRIS Settings. "
+                "Click 'T102 Get Keys' to auto-fill, or paste PrivateKey.txt content manually. "
+                "Accepted formats: base64 PKCS#8 (SAP B1 export) or PEM."
+            )
+        return key
 
     def save_private_key(self, pem: str):
-        self._write_key_file("private_key_path", pem)
+        """Persist client private key to the database field."""
+        val = pem.strip()
+        self.s.db_set("private_key", val, update_modified=False)
+        self.s.private_key = val   # update in-memory too
 
-    # ─── Session AES Key  (U_OT_SAK → SessionAESKey.txt) ────────────────
+    # ─── Session AES Key ──────────────────────────────────────────────────
 
     def get_aes_key(self) -> bytes:
         """
-        Read the session AES key from the file at session_key_path.
-        Handles raw binary, hex string, and base64 encodings.
-        Raises RuntimeError (not frappe.throw) if unavailable so the
-        caller (EFRISClient._get_aes_key) can auto-initialise silently.
+        Read the session AES key from the session_aes_key database field.
+
+        The field stores the key as base64 (e.g. x/SVvBh4S49ddPNX+nXQYg==).
+        Raises RuntimeError (not frappe.throw) if unavailable so the caller
+        (EFRISClient._get_aes_key) can trigger auto-initialisation silently.
         """
-        path = self.s.get("session_key_path")
-        if not path:
+        key_b64 = (self.s.get("session_aes_key") or "").strip()
+        if not key_b64:
             raise RuntimeError(
-                "Session Key Path is not configured in EFRIS Settings."
+                "Session AES Key is not configured in EFRIS Settings. "
+                "Click 'Full Initialise' or 'T104 Get Session Key' to auto-fill it, "
+                "or paste SessionAESKey.txt content manually."
             )
-        if not os.path.isfile(path):
-            raise RuntimeError(f"Session key file not found: {path}")
-
-        raw = _read_bytes(path)
-        key = _parse_aes_key(raw)
-        if key:
-            return key
-
-        raise RuntimeError(
-            f"Cannot parse AES key from '{path}'. "
-            "Expected 16/24/32 raw bytes, hex string, or base64."
-        )
+        key = _parse_aes_key_b64(key_b64)
+        if not key:
+            raise RuntimeError(
+                f"Cannot parse AES key from session_aes_key field. "
+                f"Expected a base64-encoded 16, 24, or 32-byte key. "
+                f"Value preview: {key_b64[:40]}"
+            )
+        return key
 
     def save_aes_key(self, key_bytes: bytes):
-        """Write session AES key to the file at session_key_path."""
-        path = self.s.get("session_key_path")
-        if not path:
-            frappe.throw(
-                "Session Key Path is not configured in EFRIS Settings. "
-                "Set the full path to SessionAESKey.txt (e.g. /home/frappe/efris/SessionAESKey.txt)."
-            )
-        _ensure_dir(path)
-        _write_bytes(path, key_bytes)
-
-    # ─── Internal ──────────────────────────────────────────────────────────
-
-    def _read_key_file(self, path_field: str, label: str) -> str:
-        path = self.s.get(path_field)
-        if not path:
-            raise RuntimeError(f"{label} path is not configured in EFRIS Settings.")
-        if not os.path.isfile(path):
-            raise RuntimeError(f"{label} file not found: {path}")
-        return _read_text(path)
-
-    def _write_key_file(self, path_field: str, content: str):
-        path = self.s.get(path_field)
-        if not path:
-            frappe.throw(
-                f"Key path field '{path_field}' is not configured in EFRIS Settings."
-            )
-        _ensure_dir(path)
-        _write_text(path, content)
+        """Persist AES session key (raw bytes) as base64 to the session_aes_key field."""
+        b64_val = base64.b64encode(key_bytes).decode("ascii")
+        self.s.db_set("session_aes_key", b64_val, update_modified=False)
+        self.s.session_aes_key = b64_val   # update in-memory too
 
 
-# ─── Low-level file helpers ────────────────────────────────────────────────────
+# ─── AES key parsing helpers ──────────────────────────────────────────────────
 
-def _read_text(path: str) -> str:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except OSError as e:
-        frappe.throw(f"Cannot read key file '{path}': {e}")
-
-
-def _read_bytes(path: str) -> bytes:
-    try:
-        with open(path, "rb") as f:
-            return f.read()
-    except OSError as e:
-        frappe.throw(f"Cannot read key file '{path}': {e}")
-
-
-def _write_text(path: str, content: str):
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-    except OSError as e:
-        frappe.throw(f"Cannot write key file '{path}': {e}")
-
-
-def _write_bytes(path: str, content: bytes):
-    try:
-        with open(path, "wb") as f:
-            f.write(content)
-    except OSError as e:
-        frappe.throw(f"Cannot write key file '{path}': {e}")
-
-
-def _ensure_dir(path: str):
-    d = os.path.dirname(path)
-    if d:
-        os.makedirs(d, exist_ok=True)
-
-
-def _parse_aes_key(raw: bytes) -> bytes | None:
+def _parse_aes_key_b64(text: str) -> "bytes | None":
     """
-    Try every encoding to extract a valid AES key (16/24/32 bytes).
-    SAP B1 writes raw binary to SessionAESKey.txt; some setups use hex or base64.
+    Parse a base64 (or hex) string into AES key bytes.
+    Accepts standard base64, URL-safe base64, with or without padding.
+    Valid AES key sizes: 16 (AES-128), 24 (AES-192), 32 (AES-256) bytes.
+    """
+    text = text.strip()
+
+    # 1. Standard / URL-safe base64 (with padding normalisation)
+    for variant in (text, text.replace("-", "+").replace("_", "/")):
+        try:
+            key = base64.b64decode(variant + "=" * (-len(variant) % 4))
+            if len(key) in (16, 24, 32):
+                return key
+        except Exception:
+            pass
+
+    # 2. Hex string  (32/48/64 hex chars = 16/24/32 bytes)
+    if len(text) in (32, 48, 64):
+        try:
+            key = bytes.fromhex(text)
+            if len(key) in (16, 24, 32):
+                return key
+        except ValueError:
+            pass
+
+    return None
+
+
+def _parse_aes_key(raw: bytes) -> "bytes | None":
+    """
+    Legacy helper: parse raw bytes (binary, hex text, or base64 text) into AES key.
+    Kept for backwards-compatibility with any code that calls this directly.
     """
     # 1. Raw binary
     if len(raw) in (16, 24, 32):
@@ -181,22 +149,4 @@ def _parse_aes_key(raw: bytes) -> bytes | None:
     except UnicodeDecodeError:
         return None
 
-    # 2. Hex string (32/48/64 hex chars)
-    if len(text) in (32, 48, 64):
-        try:
-            key = bytes.fromhex(text)
-            if len(key) in (16, 24, 32):
-                return key
-        except ValueError:
-            pass
-
-    # 3. Base64 (standard or URL-safe, with optional padding)
-    for variant in (text, text.replace("-", "+").replace("_", "/")):
-        try:
-            key = base64.b64decode(variant + "=" * (-len(variant) % 4))
-            if len(key) in (16, 24, 32):
-                return key
-        except Exception:
-            pass
-
-    return None
+    return _parse_aes_key_b64(text)

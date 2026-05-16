@@ -9,7 +9,7 @@ Key architecture:
   - All T-codes POST to the SAME endpoint (api_url = getInformation)
   - The interface code inside globalInfo routes the call server-side
   - Data is AES-128-ECB encrypted, optionally GZip compressed, Base64 encoded
-  - Keys are managed by KeyManager (file-path-first, DB fallback)
+  - Keys are managed by KeyManager (stored in EFRIS Settings DB fields)
 """
 
 import json
@@ -185,7 +185,7 @@ class EFRISClient:
             frappe.throw(
                 f"EFRIS session for <b>{self.company}</b> could not be initialised automatically: {exc}<br>"
                 "Check <b>Error Log → EFRIS Auto-Init Failed</b> for details.<br>"
-                "Ensure EFRIS Settings (API URL, TaxpayerID, key file paths) are correct."
+                "Ensure EFRIS Settings (API URL, TaxpayerID, Private Key, Session AES Key) are correct."
             )
         self._aes_key = self.key_manager.get_aes_key()
         return self._aes_key

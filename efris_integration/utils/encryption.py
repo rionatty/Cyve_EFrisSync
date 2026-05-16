@@ -70,9 +70,9 @@ def _import_rsa_key(key_data: str):
 
     raise ValueError(
         "RSA key format is not supported.<br><br>"
-        "The private key in <b>PrivateKey.txt</b> is in an unrecognised format.<br>"
-        "Run <b>Full Initialise (T101 → T104)</b> to regenerate it, or check that "
-        "the file contains a valid PEM or base64-encoded PKCS#8 private key.<br>"
+        "The Private Key in EFRIS Settings is in an unrecognised format.<br>"
+        "Run <b>Full Initialise (T101 → T104)</b> to regenerate it, or paste a valid "
+        "PEM or base64-encoded PKCS#8 private key into the Private Key field.<br>"
         f"Key preview: <code>{text[:80]}</code>"
     )
 
@@ -103,8 +103,8 @@ def rsa_decrypt(encrypted_b64: str, private_key_pem: str) -> bytes:
 
     raise ValueError(
         "RSA decryption failed (tried PKCS1v1.5 and OAEP).<br>"
-        "The T104 session key cannot be decrypted — the private key in "
-        "PrivateKey.txt may not match the current EFRIS server session.<br>"
+        "The T104 session key cannot be decrypted — the Private Key in EFRIS Settings "
+        "may not match the current EFRIS server session.<br>"
         "Run <b>Full Initialise (T101→T104)</b> from EFRIS Settings to regenerate keys."
     )
 

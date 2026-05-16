@@ -9,7 +9,7 @@ class EFRISSettings(Document):
 
     def validate(self):
         self._validate_required_fields()
-        self._clean_paths()
+        self._clean_keys()
         self._validate_industry_flags()
 
     def on_update(self):
@@ -35,9 +35,9 @@ class EFRISSettings(Document):
             if not self.get(field):
                 frappe.throw(f"<b>{label}</b> is required in EFRIS Settings.")
 
-    def _clean_paths(self):
-        """Strip accidental trailing spaces from file paths."""
-        for field in ("public_key_path", "session_key_path", "private_key_path"):
+    def _clean_keys(self):
+        """Strip accidental leading/trailing whitespace from key content fields."""
+        for field in ("private_key", "public_key", "session_aes_key"):
             val = self.get(field)
             if val:
                 self.set(field, val.strip())

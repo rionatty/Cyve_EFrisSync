@@ -7,13 +7,18 @@ Key lifecycle (from SAP source):
   T101 → Test connection, returns T101.CurrentTime
   T102 → Returns T102.clientPriKey (AES-encrypted) + T102.serverPubKey
            AES key = TaxpayerID[:10] + date("ddMMyy"), padded/truncated to 16 bytes
-           Decrypted private key written to PrivateKey.txt  (U_OT_PK path)
-           Server public key written to PublicKey.txt        (U_OT_EPK path)
+           Decrypted private key saved to private_key field in EFRIS Settings
+           Server public key saved to public_key field in EFRIS Settings
   T103 → Returns T103: Device, Taxpayer, TaxpayerBranch, TaxTypes (no password sent)
            TIN + TaxpayerID auto-updated from response
   T104 → Returns T104.passowrdDes (note: SAP source typo — double 'o')
            RSA-decrypted with client private key → session AES key
-           Written to SessionAESKey.txt  (U_OT_SAK path)
+           Saved to session_aes_key field in EFRIS Settings (base64)
+
+Keys are stored directly in the database (EFRIS Settings fields):
+  private_key      — paste content of PrivateKey.txt   (base64 PKCS#8 or PEM)
+  public_key       — paste content of PublicKey.txt     (base64 or PEM)
+  session_aes_key  — auto-filled by T104 (base64, e.g. x/SVvBh4S49ddPNX+nXQYg==)
 
 No username/password is stored or sent. Authentication is entirely via
 the RSA key-exchange in T102/T104.
@@ -66,10 +71,10 @@ def client_init(company: str) -> dict:
              - With keyTable returned: decrypt using keyTable as AES key (white-box)
              - Without keyTable (AP04): existing valid private key is kept
         3. Returns: clientPriKey, serverPubKey, keyTable (may be absent for AP04)
-        4. Client decrypts clientPriKey and saves both key files.
+        4. Client decrypts clientPriKey and saves both keys to the database.
 
-    If decryption fails but the private key file already exists and is valid
-    (i.e. T104 works), we log a warning and keep the existing file rather
+    If decryption fails but the private key field already exists and is valid
+    (i.e. T104 works), we log a warning and keep the existing key rather
     than failing — the key is already correctly set up.
     """
     client   = EFRISClient(company=company)
@@ -123,7 +128,7 @@ def client_init(company: str) -> dict:
     if private_key_pem:
         km.save_private_key(private_key_pem)
         frappe.msgprint(
-            "✅ T102: Server public key and client private key saved to files.",
+            "✅ T102: Server public key and client private key saved to EFRIS Settings.",
             indicator="green",
         )
         return {"status": "OK", "server_pub_key_preview": server_pub_key[:40] + "…"}
@@ -142,7 +147,7 @@ def client_init(company: str) -> dict:
         # Keep the existing working key — just update the server public key
         frappe.log_error(
             f"T102 clientPriKey decryption failed (keyTable missing).\n"
-            f"Existing private key file is valid — kept as-is.\n"
+            f"Existing private key in database is valid — kept as-is.\n"
             f"Error: {decrypt_error}\n"
             f"clientPriKey[:120]: {encrypted_priv_key[:120]}",
             "EFRIS T102 Decrypt Warning",
@@ -151,7 +156,7 @@ def client_init(company: str) -> dict:
             "⚠️ T102: Server public key updated.<br><br>"
             "The EFRIS server did not return a decryptable private key "
             "(<code>keyTable</code> missing).<br>"
-            "Your existing private key file is still valid — no change made to it.<br><br>"
+            "Your existing private key in EFRIS Settings is still valid — no change made.<br><br>"
             "If you need to re-download the private key, contact URA support for "
             "the correct decryption method for your EFRIS environment.",
             indicator="orange",
@@ -203,9 +208,9 @@ def get_symmetric_key(company: str) -> dict:
     T104 — Verify or refresh the session AES key.
 
     Strategy:
-      0. Test the EXISTING session key against T126 first.
+      0. Test the EXISTING session key (from session_aes_key DB field) against T126.
          If it still works → return immediately without calling T104.
-         This preserves a valid key even when the private key file is
+         This preserves a valid key even when the private key is
          incorrect (RSA decrypt of passowrdDes gives wrong results).
 
       1. If the existing key is expired (SESSION_EXPIRED) or missing:
@@ -214,8 +219,8 @@ def get_symmetric_key(company: str) -> dict:
 
       2. Save the first candidate whose T126 decrypt succeeds.
 
-    NOTE: If all T104 candidates fail it means the private key in
-    PrivateKey.txt does NOT match the public key registered with EFRIS.
+    NOTE: If all T104 candidates fail it means the private key in EFRIS Settings
+    does NOT match the public key registered with EFRIS.
     The long-term fix is to re-register a new key pair with EFRIS.
     """
     import base64 as _b64
@@ -273,8 +278,8 @@ def get_symmetric_key(company: str) -> dict:
         private_key_pem = client.key_manager.get_private_key()
     except Exception as e:
         frappe.log_error(
-            f"T104 [{company}]: private key read error — {e}  "
-            f"path={client.settings.get('private_key_path')}",
+            f"T104 [{company}]: private key read error — {e}\n"
+            f"Check the 'Private Key' field in EFRIS Settings for company '{company}'.",
             "EFRIS T104 Private Key Read Error",
         )
         private_key_pem = ""
@@ -324,14 +329,14 @@ def get_symmetric_key(company: str) -> dict:
                 doc_name=label,
             )
             # ✅ Got here → T126 decrypted successfully → key is correct
-            client.set_aes_key(key_bytes)       # persist to SessionAESKey.txt
+            client.set_aes_key(key_bytes)       # persist to session_aes_key DB field
             client._aes_key = key_bytes          # keep in cache
             frappe.logger("efris").info(
                 f"T104 ✅ [{company}] AES key confirmed by T126 probe [{label}]: "
                 f"{len(key_bytes)*8}-bit  {key_bytes.hex()}"
             )
             frappe.msgprint(
-                f"✅ T104: Session AES key ({len(key_bytes)*8}-bit) saved.",
+                f"✅ T104: Session AES key ({len(key_bytes)*8}-bit) saved to EFRIS Settings.",
                 indicator="green",
             )
             return {"status": "AES Key Set", "key_bits": len(key_bytes) * 8, "method": label}
@@ -354,7 +359,7 @@ def get_symmetric_key(company: str) -> dict:
                 f"(T126 returned [{exc.code}] but decryption succeeded): {key_bytes.hex()}"
             )
             frappe.msgprint(
-                f"✅ T104: Session AES key ({len(key_bytes)*8}-bit) saved.",
+                f"✅ T104: Session AES key ({len(key_bytes)*8}-bit) saved to EFRIS Settings.",
                 indicator="green",
             )
             return {"status": "AES Key Set", "key_bits": len(key_bytes) * 8, "method": label}
@@ -400,17 +405,19 @@ def get_symmetric_key(company: str) -> dict:
 
     frappe.throw(
         "T104: None of the candidate AES keys could decrypt EFRIS responses.<br><br>"
-        "<b>Root cause</b>: The private key in <code>PrivateKey.txt</code> does NOT match "
-        "the public key registered with EFRIS.<br><br>"
-        "<b>How to fix (permanent)</b>:<br>"
-        "1. On the server, generate a new 2048-bit RSA key pair:<br>"
-        "<code style='margin-left:1em'>openssl genrsa -out /home/admin/2026/PrivateKey.pem 2048</code><br>"
-        "<code style='margin-left:1em'>openssl rsa -in /home/admin/2026/PrivateKey.pem -pubout -out /home/admin/2026/PublicKey.pem</code><br>"
-        "2. Upload the new <b>public key</b> to the EFRIS portal (Settings → Device Management)<br>"
-        "3. Copy the private key content into <code>PrivateKey.txt</code><br><br>"
-        "<b>Temporary workaround</b>: If the system was working before, the session key "
-        "in <code>SessionAESKey.txt</code> may still be valid. Avoid clicking "
-        "<b>Full Initialise</b> — instead use <b>Fetch URA Exchange Rates</b> directly.<br><br>"
+        "<b>Root cause</b>: The private key in the <b>Private Key</b> field in EFRIS Settings "
+        "does NOT match the public key registered with EFRIS.<br><br>"
+        "<b>How to fix (Option A — generate a new key pair)</b>:<br>"
+        "1. Click <b>Generate Key Pair</b> in EFRIS Settings — a new 2048-bit RSA key pair is generated.<br>"
+        "2. Copy the public key shown in the dialog.<br>"
+        "3. Log into the EFRIS portal → Device Management → Update Public Key.<br>"
+        "4. Paste the public key and submit.<br>"
+        "5. Once EFRIS activates it, click <b>Full Initialise</b>.<br><br>"
+        "<b>How to fix (Option B — paste existing keys)</b>:<br>"
+        "1. Paste your <b>PrivateKey.txt</b> content into the Private Key field.<br>"
+        "2. Paste your <b>PublicKey.txt</b> content into the EFRIS Server Public Key field.<br>"
+        "3. Paste your <b>SessionAESKey.txt</b> content into the Session AES Key field.<br>"
+        "4. Save EFRIS Settings, then click <b>Test Session Key</b>.<br><br>"
         "See <b>Error Log → EFRIS T104 All Candidates Failed</b> for raw bytes.",
         title="T104: Private Key Mismatch",
     )
@@ -426,8 +433,8 @@ def _build_aes_key_candidates(raw_passowrdDes: bytes, private_key_pem: str) -> l
     from Crypto.Cipher import PKCS1_v1_5, PKCS1_OAEP as _OAEP
     from efris_integration.utils.encryption import _import_rsa_key
 
-    seen: set[bytes] = set()
-    out: list[tuple[str, bytes]] = []
+    seen: set = set()
+    out: list = []
 
     def _add(label: str, key: bytes):
         if len(key) in (16, 24, 32) and key not in seen:
@@ -491,14 +498,13 @@ def _build_aes_key_candidates(raw_passowrdDes: bytes, private_key_pem: str) -> l
 def diagnose_keys(company: str) -> dict:
     """
     Full server-side diagnostic: tests RSA key import, decrypts T104 passowrdDes,
-    and verifies the resulting AES key against the session file.
+    and verifies the resulting AES key against the session_aes_key DB field.
 
     Run from browser console:
         frappe.call('efris_integration.api.auth.diagnose_keys',
                     {company: 'My Company'}).then(r => console.log(r.message))
     """
     import base64 as _b64
-    import os
     from efris_integration.utils.encryption import _import_rsa_key
     from Crypto.Cipher import PKCS1_v1_5, PKCS1_OAEP as _OAEP
 
@@ -508,13 +514,13 @@ def diagnose_keys(company: str) -> dict:
 
     report = {"company": company}
 
-    # ── 1. Private key file ───────────────────────────────────────────────
-    priv_path = settings.get("private_key_path") or ""
-    report["private_key_path"]   = priv_path
-    report["private_key_exists"] = os.path.isfile(priv_path) if priv_path else False
+    # ── 1. Private key (from DB field) ───────────────────────────────────
+    priv_field_len = len((settings.get("private_key") or "").strip())
+    report["private_key_field_length"] = priv_field_len
+    report["private_key_configured"]   = priv_field_len > 0
 
     private_key_pem = ""
-    if report["private_key_exists"]:
+    if priv_field_len > 0:
         try:
             private_key_pem = km.get_private_key()
             report["private_key_length"]  = len(private_key_pem)
@@ -526,19 +532,20 @@ def diagnose_keys(company: str) -> dict:
         except Exception as exc:
             report["private_key_error"] = str(exc)
     else:
-        report["private_key_error"] = "File not found"
+        report["private_key_error"] = "Private Key field is empty in EFRIS Settings"
 
-    # ── 2. Session AES key file ───────────────────────────────────────────
-    sess_path = settings.get("session_key_path") or ""
-    report["session_key_path"]   = sess_path
-    report["session_key_exists"] = os.path.isfile(sess_path) if sess_path else False
+    # ── 2. Session AES key (from DB field) ────────────────────────────────
+    sess_b64 = (settings.get("session_aes_key") or "").strip()
+    report["session_key_configured"] = bool(sess_b64)
+    report["session_key_field_preview"] = sess_b64[:40] if sess_b64 else "(empty)"
 
     existing_aes_hex = ""
-    if report["session_key_exists"]:
+    if sess_b64:
         try:
             key_bytes = km.get_aes_key()
             report["session_key_bytes"] = len(key_bytes)
             report["session_key_hex"]   = key_bytes.hex()
+            report["session_key_b64"]   = _b64.b64encode(key_bytes).decode()
             existing_aes_hex            = key_bytes.hex()
         except Exception as exc:
             report["session_key_error"] = str(exc)
@@ -588,8 +595,8 @@ def diagnose_keys(company: str) -> dict:
             except Exception as exc:
                 report["oaep_result"] = f"EXCEPTION: {exc}"
         else:
-            report["pkcs1v15_result"] = "SKIPPED — no private key"
-            report["oaep_result"]     = "SKIPPED — no private key"
+            report["pkcs1v15_result"] = "SKIPPED — Private Key field is empty"
+            report["oaep_result"]     = "SKIPPED — Private Key field is empty"
 
         if existing_aes_hex and "pkcs1v15_plaintext_hex" in report:
             report["session_key_matches_t104"] = (
@@ -604,13 +611,19 @@ def diagnose_keys(company: str) -> dict:
 
     lines = [
         f"Company: {company}",
-        f"Private key: {report.get('private_key_import','❌')} ({report.get('private_key_rsa_bits','?')} bits)",
-        f"Session key file: {report.get('session_key_bytes','?')} bytes  hex={report.get('session_key_hex','?')}",
+        f"Private key (DB field): {'✅ configured' if priv_field_len > 0 else '❌ EMPTY'}",
+        f"  → RSA import: {report.get('private_key_import','❌')} "
+          f"({report.get('private_key_rsa_bits','?')} bits)",
+        f"Session AES key (DB field): {'✅ configured' if sess_b64 else '❌ EMPTY'}",
+        f"  → {report.get('session_key_bytes','?')} bytes  hex={report.get('session_key_hex','?')}",
+        f"  → b64={report.get('session_key_b64','?')}",
         f"T104 passowrdDes: {report.get('passowrdDes_decoded_bytes','?')} bytes (ciphertext)",
         f"PKCS1v1.5 decrypt: {report.get('pkcs1v15_result','?')}",
-        f"  → plaintext ({report.get('pkcs1v15_plaintext_len','?')} bytes): {report.get('pkcs1v15_plaintext_hex','—')}",
+        f"  → plaintext ({report.get('pkcs1v15_plaintext_len','?')} bytes): "
+          f"{report.get('pkcs1v15_plaintext_hex','—')}",
         f"OAEP decrypt: {report.get('oaep_result','?')}",
-        f"  → plaintext ({report.get('oaep_plaintext_len','?')} bytes): {report.get('oaep_plaintext_hex','—')}",
+        f"  → plaintext ({report.get('oaep_plaintext_len','?')} bytes): "
+          f"{report.get('oaep_plaintext_hex','—')}",
         f"Session key matches T104: {report.get('session_key_matches_t104','N/A')}",
     ]
 
@@ -627,12 +640,13 @@ def diagnose_keys(company: str) -> dict:
 @frappe.whitelist()
 def set_session_key(company: str, key_b64: str) -> dict:
     """
-    Manually write a base64-encoded AES session key to SessionAESKey.txt.
+    Manually write a base64-encoded AES session key to the session_aes_key DB field.
 
     Use this when:
       - T104 probes all fail (private key mismatch)
       - You have obtained the correct session key from EFRIS support or
         from a previously-working system (e.g. the SAP B1 instance)
+      - You have the raw SessionAESKey.txt content to paste in
 
     The key must be exactly 16, 24, or 32 bytes when base64-decoded.
     """
@@ -671,13 +685,15 @@ def set_session_key(company: str, key_b64: str) -> dict:
 
     if verified:
         frappe.msgprint(
-            f"✅ Session AES key ({len(key_bytes)*8}-bit) saved and <b>verified</b> — T126 decrypts successfully.",
+            f"✅ Session AES key ({len(key_bytes)*8}-bit) saved to EFRIS Settings and <b>verified</b> "
+            f"— T126 decrypts successfully.",
             indicator="green",
             title="Session Key Saved",
         )
     else:
         frappe.msgprint(
-            f"⚠️ Session AES key ({len(key_bytes)*8}-bit) saved to file, but <b>T126 verification failed</b> — "
+            f"⚠️ Session AES key ({len(key_bytes)*8}-bit) saved to EFRIS Settings, "
+            "but <b>T126 verification failed</b> — "
             "the key may be wrong or the server session has changed.",
             indicator="orange",
             title="Session Key Saved (unverified)",
@@ -691,7 +707,7 @@ def generate_key_pair(company: str) -> dict:
     """
     Generate a fresh 2048-bit RSA key pair on the server.
 
-    Saves the private key to PrivateKey.txt (private_key_path in EFRIS Settings).
+    Saves the private key to the private_key field in EFRIS Settings (DB).
     Returns the public key (PEM) so you can register it with the EFRIS portal.
 
     Steps after calling this:
@@ -718,19 +734,19 @@ def generate_key_pair(company: str) -> dict:
     try:
         km.save_public_key(pub_pem)
     except Exception:
-        pass   # optional — not fatal if public key path not configured
+        pass   # optional — not fatal if something goes wrong saving pub key
 
     frappe.log_error(
         f"New RSA key pair generated for [{company}].\n"
         f"Public key (register this with EFRIS portal):\n{pub_pem}\n\n"
-        f"Private key saved to: {client.settings.get('private_key_path')}",
+        f"Private key saved to EFRIS Settings (private_key field).",
         "EFRIS New Key Pair Generated",
     )
     frappe.db.commit()
 
     frappe.msgprint(
         f"🔑 New 2048-bit RSA key pair generated for <b>{company}</b>.<br><br>"
-        f"<b>Private key</b> saved to <code>{client.settings.get('private_key_path')}</code><br><br>"
+        f"<b>Private key</b> saved to EFRIS Settings (Private Key field).<br><br>"
         f"<b>Public key</b> (register with EFRIS portal → Device Management):<br>"
         f"<pre style='font-size:11px;word-break:break-all;'>{pub_pem}</pre><br><br>"
         f"After registering the public key on the EFRIS portal, click "
@@ -744,33 +760,34 @@ def generate_key_pair(company: str) -> dict:
 @frappe.whitelist()
 def test_session_key(company: str) -> dict:
     """
-    Test whether the current session AES key in SessionAESKey.txt can decrypt T126.
-    Shows a green tick if it works, red cross if it fails.
+    Test whether the current session AES key in the session_aes_key DB field
+    can decrypt T126. Shows a green tick if it works, red cross if it fails.
     """
-    import os as _os
+    import base64 as _b64
 
     client   = EFRISClient(company=company)
     km       = client.key_manager
     settings = client.settings
 
-    path = settings.get("session_key_path") or ""
-    if not path or not _os.path.isfile(path):
+    sess_b64 = (settings.get("session_aes_key") or "").strip()
+    if not sess_b64:
         frappe.msgprint(
-            f"❌ Session key file not found: <code>{path}</code>",
+            "❌ Session AES Key field is empty in EFRIS Settings.<br>"
+            "Click <b>Full Initialise</b> or paste the SessionAESKey.txt content manually.",
             indicator="red",
             title="No Session Key",
         )
-        return {"status": "missing", "path": path}
+        return {"status": "missing"}
 
     try:
         key_bytes = km.get_aes_key()
     except Exception as exc:
         frappe.msgprint(
-            f"❌ Cannot read session key: {exc}",
+            f"❌ Cannot parse session key: {exc}",
             indicator="red",
-            title="Session Key Read Error",
+            title="Session Key Parse Error",
         )
-        return {"status": "read_error", "error": str(exc)}
+        return {"status": "parse_error", "error": str(exc)}
 
     client._aes_key = key_bytes
 
@@ -780,7 +797,7 @@ def test_session_key(company: str) -> dict:
         frappe.msgprint(
             f"✅ Session key ({len(key_bytes)*8}-bit) is VALID — T126 decrypts successfully.<br>"
             f"Key hex: <code>{key_bytes.hex()}</code><br>"
-            f"Key b64: <code>{__import__('base64').b64encode(key_bytes).decode()}</code>",
+            f"Key b64: <code>{_b64.b64encode(key_bytes).decode()}</code>",
             indicator="green",
             title="Session Key Valid",
         )
@@ -792,15 +809,17 @@ def test_session_key(company: str) -> dict:
                 f"❌ Session key ({len(key_bytes)*8}-bit) is EXPIRED / WRONG.<br><br>"
                 f"Key hex: <code>{key_bytes.hex()}</code><br><br>"
                 f"<b>Options to recover</b>:<br>"
-                f"1. <b>Generate Key Pair</b> → register new public key with EFRIS → Full Initialise.<br>"
-                f"2. Use <b>Set Session Key</b> if you have a known-good key.",
+                f"1. Click <b>Full Initialise</b> (T101 → T103 → T104) to get a fresh session key.<br>"
+                f"2. Click <b>Generate Key Pair</b> if the private key no longer matches EFRIS.<br>"
+                f"3. Paste a known-good base64 key directly into the Session AES Key field.",
                 indicator="red",
                 title="Session Key Invalid",
             )
             return {"status": "expired", "key_hex": key_bytes.hex()}
         else:
             frappe.msgprint(
-                f"✅ Session key ({len(key_bytes)*8}-bit) is VALID (T126 [{exc.code}] but decrypt passed).<br>"
+                f"✅ Session key ({len(key_bytes)*8}-bit) is VALID "
+                f"(T126 [{exc.code}] but decrypt passed).<br>"
                 f"Key hex: <code>{key_bytes.hex()}</code>",
                 indicator="green",
                 title="Session Key Valid",
@@ -843,7 +862,7 @@ def full_initialise(company: str) -> dict:
     frappe.msgprint(
         f"🎉 EFRIS initialised for <b>{company}</b>! "
         f"Server time: {results['server_time']}<br>"
-        f"All keys saved to files. Ready to submit documents.",
+        f"Session AES key saved to EFRIS Settings. Ready to submit documents.",
         indicator="green",
         title="EFRIS Initialised",
     )
@@ -856,37 +875,52 @@ def refresh_session_if_needed():
     """
     Called hourly by the scheduler.
     Iterates all EFRIS Settings records and re-runs T103 + T104
-    for any company whose session key file is stale (>7.5 h old).
+    for any company whose session AES key field is missing or stale.
     """
-    import os
-    import time
-
-    companies = frappe.get_all("EFRIS Settings", fields=["name", "api_url", "session_key_path"])
+    companies = frappe.get_all("EFRIS Settings", fields=["name", "api_url", "session_aes_key"])
     for row in companies:
-        company  = row["name"]
-        api_url  = row.get("api_url") or ""
-        key_path = row.get("session_key_path") or ""
+        company = row["name"]
+        api_url = row.get("api_url") or ""
 
         if not api_url:
             continue   # not configured
 
         try:
-            if not key_path or not os.path.isfile(key_path):
-                # Session key file missing — try a full init
+            sess_b64 = (row.get("session_aes_key") or "").strip()
+
+            if not sess_b64:
+                # Session key field is empty — try a full init
                 frappe.logger("efris").info(
-                    f"EFRIS [{company}]: session key missing — auto-initialising."
+                    f"EFRIS [{company}]: session key empty — auto-initialising."
                 )
                 sign_in(company)
                 get_symmetric_key(company)
                 continue
 
-            age_hours = (time.time() - os.path.getmtime(key_path)) / 3600
-            if age_hours > 7.5:
-                frappe.logger("efris").info(
-                    f"EFRIS [{company}]: refreshing session (key {age_hours:.1f}h old)."
+            # Session key exists — test it; refresh only if expired
+            client = EFRISClient(company=company)
+            try:
+                from efris_integration.api.key_manager import _parse_aes_key_b64
+                key_bytes = _parse_aes_key_b64(sess_b64)
+                if not key_bytes:
+                    raise ValueError("Cannot parse AES key from DB field")
+                client._aes_key = key_bytes
+                client.call(
+                    "T126", payload=None, encrypt=False,
+                    doc_type="__session_check__", doc_name=company,
                 )
-                sign_in(company)
-                get_symmetric_key(company)
+                # Key still valid — nothing to do
+                frappe.logger("efris").info(
+                    f"EFRIS [{company}]: session key still valid — skipping refresh."
+                )
+            except EFRISAPIError as exc:
+                if exc.code == "SESSION_EXPIRED":
+                    frappe.logger("efris").info(
+                        f"EFRIS [{company}]: session key expired — refreshing."
+                    )
+                    sign_in(company)
+                    get_symmetric_key(company)
+                # Other EFRIS errors (key ok, just non-00 response) — leave as-is
 
         except Exception:
             frappe.log_error(
