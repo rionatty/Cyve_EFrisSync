@@ -296,11 +296,17 @@ CUSTOM_FIELDS = {
     # ─── Customer ─────────────────────────────────────────────────────────
     # EFRIS tab — mirrors SAP B1 Business Partner → EFRIS tab:
     #   Export | Business Type | Invoice Name | Import | Deemed VAT
+    # "Verify TIN" is a Button field placed right after tax_id so it renders
+    # inline on the form (visible without opening any menu).
     # Old fields kept hidden so invoice.py (_buyer_details) still works.
     "Customer": [
+        # ── Verify TIN button — inline next to Tax ID ─────────────────────
+        {"fieldname": "efris_verify_tin_btn", "fieldtype": "Button", "label": "Verify TIN",
+         "insert_after": "tax_id",            "module": "EFRIS Integration"},
+
         # ── Tab Break ─────────────────────────────────────────────────────
         {"fieldname": "efris_tab",          "fieldtype": "Tab Break", "label": "EFRIS",
-         "insert_after": "tax_id",          "module": "EFRIS Integration"},
+         "insert_after": "efris_verify_tin_btn", "module": "EFRIS Integration"},
 
         # ── Visible fields (SAP B1 EFRIS tab layout) ──────────────────────
         {"fieldname": "efris_export",       "fieldtype": "Select",    "label": "Export",
