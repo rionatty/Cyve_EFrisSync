@@ -238,8 +238,8 @@ def get_symmetric_key(company: str) -> dict:
         )
         private_key_pem = ""
 
-    # Probe timestamp — same format SAP B1 uses for T126 queryDate
-    _probe_ts = datetime.now().strftime("%Y-%m-%d") + " 00:00:00"
+    # Probe date — T126 issueDate field is "yyyy-MM-dd" (no time component, per EFRIS API doc)
+    _probe_ts = datetime.now().strftime("%Y-%m-%d")
 
     # ── Step 0: test the existing session key ─────────────────────────────
     # Probe uses an AES-ENCRYPTED payload so EFRIS actually tries to decrypt
@@ -261,7 +261,7 @@ def get_symmetric_key(company: str) -> dict:
         try:
             client.call(
                 "T126",
-                payload={"queryDate": _probe_ts},
+                payload={"issueDate": _probe_ts},
                 encrypt=True,
                 sign=bool(private_key_pem),
                 doc_type="__key_check__", doc_name="existing",
@@ -346,7 +346,7 @@ def get_symmetric_key(company: str) -> dict:
 
     # ── Probe T126 with each candidate ────────────────────────────────────
     #
-    # We send a REAL encrypted+signed T126 request (with queryDate payload).
+    # We send a REAL encrypted+signed T126 request (with issueDate payload, per EFRIS API doc).
     # This means EFRIS actually tries to decrypt our request using its session
     # key.  The key is confirmed or rejected by EFRIS's own decrypt:
     #
@@ -372,7 +372,7 @@ def get_symmetric_key(company: str) -> dict:
         try:
             client.call(
                 "T126",
-                payload={"queryDate": _probe_ts},
+                payload={"issueDate": _probe_ts},
                 encrypt=True,
                 sign=bool(private_key_pem),
                 doc_type="__t104_probe__",
@@ -782,7 +782,7 @@ def set_session_key(company: str, key_b64: str) -> dict:
     # Anything else = key correct.
     client._aes_key = key_bytes
     verified = False
-    probe_ts = datetime.now().strftime("%Y-%m-%d") + " 00:00:00"
+    probe_ts = datetime.now().strftime("%Y-%m-%d")
     try:
         private_key_pem = client.key_manager.get_private_key()
     except Exception:
@@ -790,7 +790,7 @@ def set_session_key(company: str, key_b64: str) -> dict:
     try:
         client.call(
             "T126",
-            payload={"queryDate": probe_ts},
+            payload={"issueDate": probe_ts},
             encrypt=True,
             sign=bool(private_key_pem),
             doc_type="__key_set__", doc_name="manual",
@@ -913,7 +913,7 @@ def test_session_key(company: str) -> dict:
     # Use encrypted probe: error 15 = EFRIS can't decrypt our request → key wrong.
     # SESSION_EXPIRED = we can't decrypt response → key wrong.
     # Anything else = EFRIS accepted our encrypted payload → key correct.
-    probe_ts = datetime.now().strftime("%Y-%m-%d") + " 00:00:00"
+    probe_ts = datetime.now().strftime("%Y-%m-%d")
     try:
         _priv = client.key_manager.get_private_key()
     except Exception:
@@ -922,7 +922,7 @@ def test_session_key(company: str) -> dict:
     try:
         client.call(
             "T126",
-            payload={"queryDate": probe_ts},
+            payload={"issueDate": probe_ts},
             encrypt=True,
             sign=bool(_priv),
             doc_type="__key_test__", doc_name="test",
