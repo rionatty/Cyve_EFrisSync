@@ -13,19 +13,29 @@
 
 frappe.ui.form.on("Customer", {
 
-    // ── Toolbar button — added (and styled) on every form refresh ─────────────
+    // ── Inject "Verify TIN" directly into the page-header action bar ──────────
+    // frm.add_custom_button() targets the inner form toolbar (a different row).
+    // We instead insert a real <button> before frm.page.btn_primary (Save)
+    // so it appears in the same top bar as Create / View / Actions / Save.
     refresh(frm) {
-        // add_custom_button returns the <button> jQuery element.
-        // Assign first, style separately so a null return never throws.
-        const $btn = frm.add_custom_button(__("Verify TIN"), () => {
-            efris_verify_tin(frm);
-        });
+        // Prevent duplicates on repeated refresh calls
+        frm.page.wrapper.find(".efris-verify-tin-btn").remove();
 
-        if ($btn && $btn.length) {
-            $btn
-                .removeClass("btn-default btn-secondary")
-                .addClass("btn-primary")
-                .css({ "font-weight": "600" });
+        const $btn = $("<button>")
+            .addClass("btn btn-primary btn-sm efris-verify-tin-btn")
+            .css({ "margin-right": "6px", "font-weight": "600" })
+            .text(__("Verify TIN"))
+            .on("click", function () {
+                efris_verify_tin(frm);
+            });
+
+        // Insert just before the Save button in the page header
+        const $save = frm.page.btn_primary;
+        if ($save && $save.length) {
+            $save.before($btn);
+        } else {
+            // Fallback: append to the .page-actions bar
+            frm.page.wrapper.find(".page-actions").prepend($btn);
         }
     },
 
