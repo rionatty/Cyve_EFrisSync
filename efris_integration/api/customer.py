@@ -1,12 +1,19 @@
 """
 Customer / Business-Partner EFRIS helpers.
 
-verify_tin() — Query URA for a TIN and return the taxpayer's registered name
-               and status.  Mirrors SAP B1 "Verify TIN" button on the EFRIS tab.
+verify_tin() — Query URA for a TIN and return the taxpayer's registered name,
+               status and type.  Mirrors SAP B1 Business Partner → Verify TIN
+               button (BusinessPartnerEfrisTabPage.cs → VerifyTin_Click).
 
-The T-code used is T119 (Customer Information Query) or the closest available
-taxpayer-lookup endpoint provided by URA EFRIS.  If URA does not return a
-structured response the raw response is surfaced to the caller.
+SAP B1 flow:
+  1. POST T119 with { "tin": "<TIN>" }
+  2. Decrypt + parse:
+       taxpayerName  / TaxpayerName / businessName
+       taxpayerStatus / status
+       taxpayerType   (INDIVIDUAL | COMPANY | GOVERNMENT | FOREIGN_NATIONAL)
+  3. Return structured dict; caller maps taxpayerType → buyerType (B2B/B2C/…)
+
+T-code T119 = Customer Information Query.
 """
 
 import frappe
@@ -23,11 +30,12 @@ def verify_tin(tin: str, company: str) -> dict:
 
     Returns:
         {
-          "status":        "ok" | "not_found",
-          "tin":           "1000012345",
-          "taxpayer_name": "ACME LIMITED",
-          "status_desc":   "Active",
-          "message":       "human-readable summary"
+          "status":         "ok" | "not_found",
+          "tin":            "1000012345",
+          "taxpayer_name":  "ACME LIMITED",
+          "taxpayer_type":  "COMPANY",          # raw URA field — JS maps to B2B/B2C/…
+          "status_desc":    "Active",
+          "message":        "human-readable summary"
         }
     """
     if not tin:
@@ -71,18 +79,31 @@ def verify_tin(tin: str, company: str) -> dict:
     if isinstance(result, list) and result:
         result = result[0] if isinstance(result[0], dict) else {}
 
+    # ── Parse response ────────────────────────────────────────────────────────
+    # URA returns taxpayer details in the decrypted body.
+    # Field names vary by EFRIS version; try all known variants (SAP B1 T119ResponseMapper).
     taxpayer_name = (
         result.get("taxpayerName")
         or result.get("TaxpayerName")
         or result.get("businessName")
+        or result.get("BusinessName")
         or result.get("name")
         or ""
     )
     status_desc = (
         result.get("taxpayerStatus")
+        or result.get("TaxpayerStatus")
         or result.get("status")
         or result.get("statusDesc")
         or "Active"
+    )
+    # taxpayerType: INDIVIDUAL | COMPANY | GOVERNMENT | FOREIGN_NATIONAL
+    # JS maps this to B2C / B2B / B2G / B2F respectively
+    taxpayer_type = (
+        result.get("taxpayerType")
+        or result.get("TaxpayerType")
+        or result.get("customerType")
+        or ""
     )
     returned_tin = result.get("tin") or result.get("TIN") or tin
 
@@ -93,15 +114,17 @@ def verify_tin(tin: str, company: str) -> dict:
             "status":        "ok",
             "tin":           returned_tin,
             "taxpayer_name": taxpayer_name,
+            "taxpayer_type": taxpayer_type,
             "status_desc":   status_desc,
             "message":       f"TIN {returned_tin} verified — {taxpayer_name}",
         }
 
     # Response came back but had no usable fields
     return {
-        "status":  "ok",
-        "tin":     tin,
+        "status":        "ok",
+        "tin":           tin,
         "taxpayer_name": "",
+        "taxpayer_type": "",
         "status_desc":   "Verified",
-        "message": "TIN verified with URA (no name returned).",
+        "message":       "TIN verified with URA (no name returned).",
     }

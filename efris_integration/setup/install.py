@@ -300,9 +300,12 @@ CUSTOM_FIELDS = {
     # inline on the form (visible without opening any menu).
     # Old fields kept hidden so invoice.py (_buyer_details) still works.
     "Customer": [
-        # ── Verify TIN button — inline next to Tax ID ─────────────────────
+        # ── Verify TIN button — kept hidden; toolbar button used instead ───
+        # (Button-type custom field; JS adds it to the form toolbar via
+        #  frm.add_custom_button so it appears next to Save / Actions.)
         {"fieldname": "efris_verify_tin_btn", "fieldtype": "Button", "label": "Verify TIN",
-         "insert_after": "tax_id",            "module": "EFRIS Integration"},
+         "insert_after": "tax_id",            "module": "EFRIS Integration",
+         "hidden": 1},
 
         # ── Tab Break ─────────────────────────────────────────────────────
         {"fieldname": "efris_tab",          "fieldtype": "Tab Break", "label": "EFRIS",
