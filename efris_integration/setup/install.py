@@ -106,15 +106,145 @@ CUSTOM_FIELDS = {
     ],
 
     # ─── Item ──────────────────────────────────────────────────────────────
+    # Tab Break converts the old Section into a full tab between Details and Inventory.
+    # All SAP B1 EFRIS item UDFs are mapped here (ItemMaster.cs / ExciseDuty.cs).
     "Item": [
-        {"fieldname": "efris_section", "fieldtype": "Section Break", "label": "EFRIS / URA", "insert_after": "taxes", "collapsible": 1, "module": "EFRIS Integration"},
-        {"fieldname": "efris_goods_category_id", "fieldtype": "Data", "label": "EFRIS Goods Category ID", "description": "e.g. 238 for general goods"},
-        {"fieldname": "efris_excise_flag", "fieldtype": "Check", "label": "Excisable Good"},
-        {"fieldname": "efris_excise_rate", "fieldtype": "Float", "label": "Excise Rate (%)", "depends_on": "efris_excise_flag"},
+        # ── Tab ────────────────────────────────────────────────────────────
+        {
+            "fieldname": "efris_section",
+            "fieldtype": "Tab Break",
+            "label":     "EFRIS / URA",
+            "insert_after": "taxes",
+        },
+
+        # ── Left column ─────────────────────────────────────────────────────
+        {
+            "fieldname":   "efris_upload_type",
+            "fieldtype":   "Select",
+            "label":       "Upload Type On EFRIS",
+            "options":     "\n1\n2",
+            "description": "1 = Upload to EFRIS, 2 = Do Not Upload",
+        },
+        {
+            "fieldname": "efris_goods_type",
+            "fieldtype": "Select",
+            "label":     "Goods Type",
+            "options":   "\nGoods\nServices",
+            "default":   "Goods",
+        },
+        {
+            "fieldname":   "efris_tax_rate_code",
+            "fieldtype":   "Select",
+            "label":       "Tax Rate",
+            "options":     "\nA\nB\nC\nD\nE",
+            "description": "A=Standard(18%), B=Zero-Rated, C=Exempt, D=Special, E=Out of Scope",
+        },
+        {
+            "fieldname": "efris_unit_price",
+            "fieldtype": "Float",
+            "label":     "Unit Price",
+            "default":   "0",
+        },
+        {
+            "fieldname": "efris_reference_no",
+            "fieldtype": "Data",
+            "label":     "Reference No.",
+        },
+        {
+            "fieldname":   "efris_goods_category_id",
+            "fieldtype":   "Data",
+            "label":       "Commodity Category Id",
+            "description": "e.g. 238 for general goods",
+        },
+        {
+            "fieldname": "efris_stock_prewarning",
+            "fieldtype": "Float",
+            "label":     "Stock Prewarning",
+            "default":   "0",
+        },
+        {
+            "fieldname": "efris_have_piece_unit",
+            "fieldtype": "Select",
+            "label":     "Have Piece Unit",
+            "options":   "\nYes\nNo",
+        },
+        {
+            "fieldname": "efris_have_excise_tax",
+            "fieldtype": "Select",
+            "label":     "Have Excise Tax",
+            "options":   "\nYes\nNo",
+        },
+        # Keep legacy checkbox for backward-compat with existing invoice logic
+        {
+            "fieldname": "efris_excise_flag",
+            "fieldtype": "Check",
+            "label":     "Excisable Good",
+            "hidden":    1,
+        },
+
+        # ── Column Break ────────────────────────────────────────────────────
         {"fieldname": "efris_col_break", "fieldtype": "Column Break"},
-        {"fieldname": "efris_excise_rate_usd", "fieldtype": "Float", "label": "Excise Rate USD/Ton or USD/Unit", "depends_on": "efris_excise_flag"},
-        {"fieldname": "efris_weight_unit", "fieldtype": "Float", "label": "Weight Per Unit (kg)", "depends_on": "efris_excise_flag"},
-        {"fieldname": "volume_per_unit", "fieldtype": "Float", "label": "Volume Per Unit (Litres)", "depends_on": "efris_excise_flag"},
+
+        # ── Right column ─────────────────────────────────────────────────────
+        {
+            "fieldname": "efris_excise_duty_category",
+            "fieldtype": "Data",
+            "label":     "Excise Duty Category",
+        },
+        {
+            "fieldname": "efris_piece_uom",
+            "fieldtype": "Data",
+            "label":     "Piece UOM",
+        },
+        {
+            "fieldname": "efris_piece_unit_price",
+            "fieldtype": "Float",
+            "label":     "Piece Unit Price",
+            "default":   "0",
+        },
+        {
+            "fieldname": "efris_excise_weight",
+            "fieldtype": "Data",
+            "label":     "Excise Weight",
+        },
+        {
+            "fieldname": "efris_piece_scaled_value",
+            "fieldtype": "Float",
+            "label":     "Piece Scaled Value",
+            "default":   "0",
+        },
+        {
+            "fieldname": "efris_excise_rate",
+            "fieldtype": "Float",
+            "label":     "Excise Rate (%)",
+            "default":   "0",
+        },
+        {
+            "fieldname": "efris_excise_rate_usd",
+            "fieldtype": "Float",
+            "label":     "Excise Rate USD/Tonne",
+            "default":   "0",
+        },
+        {
+            "fieldname": "efris_weight_unit",
+            "fieldtype": "Float",
+            "label":     "Weight Per Unit (kg)",
+        },
+        {
+            "fieldname": "volume_per_unit",
+            "fieldtype": "Float",
+            "label":     "Volume Per Unit (Litres)",
+        },
+        {
+            "fieldname": "efris_item_remark",
+            "fieldtype": "Small Text",
+            "label":     "Remark",
+        },
+        {
+            "fieldname": "efris_stick",
+            "fieldtype": "Check",
+            "label":     "Stick",
+        },
     ],
 
     # ─── Customer ────────────────────────────────────────────────────────
