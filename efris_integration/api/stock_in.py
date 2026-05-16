@@ -172,7 +172,7 @@ def _call_t131(client: EFRISClient, payload: dict, doc_name: str) -> dict:
         "T131",
         payload=payload,
         encrypt=True,
-        sign=False,
+        sign=True,
         doc_type="Stock Entry",
         doc_name=doc_name,
     )
