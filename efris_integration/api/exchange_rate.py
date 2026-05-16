@@ -65,7 +65,8 @@ def sync_exchange_rates(
 
     total_inserted = 0
     total_updated  = 0
-    failed_dates   = []
+    # Each entry: (date_str, error_code) so we can show reasons in the result
+    failed_dates: list[tuple[str, str]] = []
     current        = d_from
 
     days_total = (d_to - d_from).days + 1
@@ -78,22 +79,20 @@ def sync_exchange_rates(
         try:
             rate_list = _fetch_rates_for_date(client, company, query_ts, date_str)
         except EFRISAPIError as exc:
-            # Non-00 returnCode for this date — log and continue (matches SAP B1)
-            short_msg = f"T126 [{exc.code}] for {date_str} [{company}]: {exc.message}"[:500]
+            # Non-00 returnCode for this date — log and continue (mirrors SAP B1)
+            short_msg = (
+                f"T126 [{exc.code}] {date_str} [{company}]: {exc.message}"
+            )[:500]
             frappe.log_error(title="EFRIS Exchange Rate Skip", message=short_msg)
-            frappe.logger("efris").warning(
-                f"T126 skip {date_str} [{company}]: [{exc.code}] {exc.message}"
-            )
-            failed_dates.append(date_str)
+            frappe.logger("efris").warning(short_msg)
+            failed_dates.append((date_str, exc.code))
             current += timedelta(days=1)
             continue
         except Exception as exc:
-            short_msg = f"T126 error for {date_str} [{company}]: {str(exc)[:400]}"
+            short_msg = f"T126 error {date_str} [{company}]: {str(exc)[:400]}"
             frappe.log_error(title="EFRIS Exchange Rate Error", message=short_msg)
-            frappe.logger("efris").error(
-                f"T126 error {date_str} [{company}]: {exc}"
-            )
-            failed_dates.append(date_str)
+            frappe.logger("efris").error(short_msg)
+            failed_dates.append((date_str, "ERR"))
             current += timedelta(days=1)
             continue
 
@@ -101,18 +100,15 @@ def sync_exchange_rates(
             frappe.logger("efris").warning(
                 f"T126: no rates returned for {date_str} [{company}]"
             )
+            failed_dates.append((date_str, "EMPTY"))
             current += timedelta(days=1)
             continue
 
-        # Log the first item of each day's response so we can see the exact
-        # field names EFRIS returns (check Error Log → "EFRIS T126 Rate Item Shape")
-        if rate_list:
-            frappe.log_error(
-                f"T126 [{company}] {date_str}: {len(rate_list)} items.\n"
-                f"First item keys: {list(rate_list[0].keys()) if isinstance(rate_list[0], dict) else rate_list[0]}\n"
-                f"First item: {rate_list[0]}",
-                "EFRIS T126 Rate Item Shape",
-            )
+        # Log rate item shape to frappe logger (not Error Log) for debugging
+        frappe.logger("efris").info(
+            f"T126 [{company}] {date_str}: {len(rate_list)} items. "
+            f"First: {rate_list[0] if rate_list else '—'}"
+        )
 
         for item in rate_list:
             if not isinstance(item, dict):
@@ -160,20 +156,42 @@ def sync_exchange_rates(
 
     frappe.db.commit()
 
-    # Build result message — mirrors SAP B1 ShowSuccessMessage
+    # ── Build result message ───────────────────────────────────────────────
     days_done = days_total - len(failed_dates)
     msg = (
         f"✅ URA rates updated for {days_done}/{days_total} day(s): "
         f"{total_inserted} added, {total_updated} updated."
     )
+
     if failed_dates:
-        msg += f"<br>⚠️ Skipped {len(failed_dates)} day(s): {', '.join(failed_dates)}"
+        skip_lines = []
+        session_key_error = False
+        for ds, code in failed_dates:
+            skip_lines.append(f"{ds} [{code}]")
+            if code in ("15", "16", "SESSION_EXPIRED", "SESSION_REFRESH_FAILED"):
+                session_key_error = True
+
+        msg += f"<br>⚠️ Skipped {len(failed_dates)} day(s): {', '.join(skip_lines)}"
+
+        if session_key_error:
+            msg += (
+                "<br><br>❌ <b>Session key issue detected</b> — EFRIS cannot decrypt "
+                "the request (error 15 = stale AES key).<br>"
+                "Fix: paste the current <b>SessionAESKey.txt</b> content from the "
+                "SAP B1 server into <b>EFRIS Settings → Session AES Key</b> and save."
+            )
+        elif any(c == "EMPTY" for _, c in failed_dates):
+            msg += (
+                "<br><br>ℹ️ EFRIS returned no rates for these dates — "
+                "URA may not publish rates for today until end of business day. "
+                "Try fetching for yesterday or a past date range."
+            )
 
     frappe.msgprint(msg, indicator="green" if not failed_dates else "orange")
     return {
         "inserted": total_inserted,
         "updated":  total_updated,
-        "failed":   failed_dates,
+        "failed":   [ds for ds, _ in failed_dates],
         "days":     days_done,
     }
 
