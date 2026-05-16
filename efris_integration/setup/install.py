@@ -78,56 +78,59 @@ CUSTOM_FIELDS = {
     ],
 
     # ─── Stock Entry ──────────────────────────────────────────────────────
-    # URA tab: 4 visible fields only (mirrors original SAP B1 screenshot).
-    # All other fields are hidden — they still exist in the DB so T114/T115/
-    # T119 can read/write them; they just don't clutter the tab.
+    # URA tab: exactly 4 visible fields. Every field has an explicit
+    # insert_after so Frappe chains them correctly inside the URA tab.
+    # Hidden fields exist in DB for T114/T115/T119 backward compat.
     "Stock Entry": [
-        # ── Tab ───────────────────────────────────────────────────────────────
-        {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "URA",
-         "insert_after": "remarks", "module": "EFRIS Integration"},
+        # ── Tab Break — anchored after "remarks" ──────────────────────────────
+        {"fieldname": "efris_section",        "fieldtype": "Tab Break",     "label": "URA",
+         "insert_after": "remarks",            "module": "EFRIS Integration"},
 
-        # ── Left column (visible) ─────────────────────────────────────────────
-        {"fieldname": "efris_stock_in_type", "fieldtype": "Select",
-         "label": "Stock In Type",
+        # ── Left column ───────────────────────────────────────────────────────
+        {"fieldname": "efris_stock_in_type",  "fieldtype": "Select",        "label": "Stock In Type",
+         "insert_after": "efris_section",
          "options": "\nImport\nLocal Purchase\nManufacture/Assembling\nOpening Stock",
          "module": "EFRIS Integration"},
-        {"fieldname": "efris_supplier_name", "fieldtype": "Data",
-         "label": "Supplier Name"},
+        {"fieldname": "efris_supplier_name",  "fieldtype": "Data",          "label": "Supplier Name",
+         "insert_after": "efris_stock_in_type"},
 
-        # ── Right column (visible) ────────────────────────────────────────────
-        {"fieldname": "efris_col_break", "fieldtype": "Column Break"},
+        # ── Column Break ──────────────────────────────────────────────────────
+        {"fieldname": "efris_col_break",      "fieldtype": "Column Break",
+         "insert_after": "efris_supplier_name"},
 
-        {"fieldname": "efris_reference_no", "fieldtype": "Data",
-         "label": "Reference No"},
-        {"fieldname": "efris_ura_remark", "fieldtype": "Small Text",
-         "label": "Remark", "read_only": 1,
+        # ── Right column ──────────────────────────────────────────────────────
+        {"fieldname": "efris_reference_no",   "fieldtype": "Data",          "label": "Reference No",
+         "insert_after": "efris_col_break"},
+        {"fieldname": "efris_ura_remark",     "fieldtype": "Small Text",    "label": "Remark",
+         "insert_after": "efris_reference_no",
+         "read_only": 1,
          "description": "Populated from URA EFRIS response after T131 submission.",
          "module": "EFRIS Integration"},
 
-        # ── Hidden — kept for backward compat with T114 / T115 / T119 ─────────
-        {"fieldname": "efris_supplier_tin", "fieldtype": "Data",
-         "label": "Supplier TIN (EFRIS)", "hidden": 1},
-        {"fieldname": "efris_invoice_id", "fieldtype": "Data",
-         "label": "EFRIS Invoice ID", "read_only": 1, "hidden": 1},
-        {"fieldname": "efris_status", "fieldtype": "Select",
-         "label": "EFRIS Status",
-         "options": "\nPending\nSubmitted\nFailed", "read_only": 1, "hidden": 1},
-        {"fieldname": "efris_submitted_at", "fieldtype": "Datetime",
-         "label": "EFRIS Submitted At", "read_only": 1, "hidden": 1},
-        {"fieldname": "efris_stock_in_option", "fieldtype": "Select",
-         "label": "EFRIS Stock-In Code (Legacy)",
-         "options": "\n101\n102\n103\n104\n105", "hidden": 1},
-        {"fieldname": "efris_recipient_name", "fieldtype": "Data",
-         "label": "Recipient Name (EFRIS)", "hidden": 1},
-        {"fieldname": "efris_recipient_tin", "fieldtype": "Data",
-         "label": "Recipient TIN (EFRIS)", "hidden": 1},
-        {"fieldname": "efris_return_against_invoice_id", "fieldtype": "Data",
-         "label": "Return Against EFRIS Invoice ID", "hidden": 1},
-        {"fieldname": "efris_return_reason_code", "fieldtype": "Select",
-         "label": "Return Reason Code",
-         "options": "\n101\n102\n103\n104\n105", "hidden": 1},
-        {"fieldname": "efris_return_reason", "fieldtype": "Data",
-         "label": "Return Reason", "hidden": 1},
+        # ── Hidden — kept for T114 / T115 / T119 backward compat ─────────────
+        {"fieldname": "efris_supplier_tin",               "fieldtype": "Data",     "label": "Supplier TIN (EFRIS)",
+         "insert_after": "efris_ura_remark",               "hidden": 1},
+        {"fieldname": "efris_invoice_id",                 "fieldtype": "Data",     "label": "EFRIS Invoice ID",
+         "insert_after": "efris_supplier_tin",             "hidden": 1, "read_only": 1},
+        {"fieldname": "efris_status",                     "fieldtype": "Select",   "label": "EFRIS Status",
+         "insert_after": "efris_invoice_id",               "hidden": 1, "read_only": 1,
+         "options": "\nPending\nSubmitted\nFailed"},
+        {"fieldname": "efris_submitted_at",               "fieldtype": "Datetime", "label": "EFRIS Submitted At",
+         "insert_after": "efris_status",                   "hidden": 1, "read_only": 1},
+        {"fieldname": "efris_stock_in_option",            "fieldtype": "Select",   "label": "EFRIS Stock-In Code (Legacy)",
+         "insert_after": "efris_submitted_at",             "hidden": 1,
+         "options": "\n101\n102\n103\n104\n105"},
+        {"fieldname": "efris_recipient_name",             "fieldtype": "Data",     "label": "Recipient Name (EFRIS)",
+         "insert_after": "efris_stock_in_option",          "hidden": 1},
+        {"fieldname": "efris_recipient_tin",              "fieldtype": "Data",     "label": "Recipient TIN (EFRIS)",
+         "insert_after": "efris_recipient_name",           "hidden": 1},
+        {"fieldname": "efris_return_against_invoice_id",  "fieldtype": "Data",     "label": "Return Against EFRIS Invoice ID",
+         "insert_after": "efris_recipient_tin",            "hidden": 1},
+        {"fieldname": "efris_return_reason_code",         "fieldtype": "Select",   "label": "Return Reason Code",
+         "insert_after": "efris_return_against_invoice_id","hidden": 1,
+         "options": "\n101\n102\n103\n104\n105"},
+        {"fieldname": "efris_return_reason",              "fieldtype": "Data",     "label": "Return Reason",
+         "insert_after": "efris_return_reason_code",       "hidden": 1},
     ],
 
     # ─── Stock Reconciliation ─────────────────────────────────────────────
