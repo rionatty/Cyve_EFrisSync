@@ -898,53 +898,50 @@ def full_initialise(company: str) -> dict:
 def refresh_session_if_needed():
     """
     Called hourly by the scheduler.
-    Iterates all EFRIS Settings records and re-runs T103 + T104
-    for any company whose session AES key field is missing or stale.
+
+    Per EFRIS documentation, the session AES key must be refreshed daily.
+    This function runs T103 → T104 for every configured company to obtain
+    and store a fresh session key.
+
+    Running hourly (not just daily) ensures the key is always fresh —
+    EFRIS sessions can expire in under 24 hours in some environments.
+
+    If T104 fails (private key wrong/empty), the error is logged but
+    other companies continue. The stored key (if any) remains available
+    for manual operations until it expires.
     """
-    companies = frappe.get_all("EFRIS Settings", fields=["name", "api_url", "session_aes_key"])
+    companies = frappe.get_all(
+        "EFRIS Settings",
+        filters={"api_url": ["!=", ""]},
+        fields=["name", "api_url"],
+    )
+
     for row in companies:
         company = row["name"]
-        api_url = row.get("api_url") or ""
+        api_url = (row.get("api_url") or "").strip()
 
         if not api_url:
-            continue   # not configured
+            continue   # not configured — skip
 
         try:
-            sess_b64 = (row.get("session_aes_key") or "").strip()
+            frappe.logger("efris").info(
+                f"EFRIS [{company}]: running scheduled T103+T104 session refresh."
+            )
 
-            if not sess_b64:
-                # Session key field is empty — try a full init
-                frappe.logger("efris").info(
-                    f"EFRIS [{company}]: session key empty — auto-initialising."
-                )
-                sign_in(company)
-                get_symmetric_key(company)
-                continue
-
-            # Session key exists — test it; refresh only if expired
-            client = EFRISClient(company=company)
+            # T103 — sign in (must precede T104 per EFRIS spec)
             try:
-                from efris_integration.api.key_manager import _parse_aes_key_b64
-                key_bytes = _parse_aes_key_b64(sess_b64)
-                if not key_bytes:
-                    raise ValueError("Cannot parse AES key from DB field")
-                client._aes_key = key_bytes
-                client.call(
-                    "T126", payload=None, encrypt=False,
-                    doc_type="__session_check__", doc_name=company,
+                sign_in(company)
+                frappe.logger("efris").info(f"EFRIS [{company}]: T103 OK")
+            except Exception as e:
+                frappe.logger("efris").warning(
+                    f"EFRIS [{company}]: T103 warning: {str(e)[:200]}"
                 )
-                # Key still valid — nothing to do
-                frappe.logger("efris").info(
-                    f"EFRIS [{company}]: session key still valid — skipping refresh."
-                )
-            except EFRISAPIError as exc:
-                if exc.code == "SESSION_EXPIRED":
-                    frappe.logger("efris").info(
-                        f"EFRIS [{company}]: session key expired — refreshing."
-                    )
-                    sign_in(company)
-                    get_symmetric_key(company)
-                # Other EFRIS errors (key ok, just non-00 response) — leave as-is
+
+            # T104 — get fresh session AES key, save to DB
+            get_symmetric_key(company)
+            frappe.logger("efris").info(
+                f"EFRIS [{company}]: T104 OK — session key refreshed."
+            )
 
         except Exception:
             frappe.log_error(
