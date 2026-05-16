@@ -228,7 +228,27 @@ def get_symmetric_key(company: str) -> dict:
 
     client = EFRISClient(company=company)
 
+    # Load private key upfront — needed for signing the step-0 probe.
+    try:
+        private_key_pem = client.key_manager.get_private_key()
+    except Exception as e:
+        frappe.logger("efris").warning(
+            f"T104 [{company}]: Private Key field is empty — "
+            f"RSA candidates unavailable. Consider pasting SessionAESKey.txt directly. Error: {e}"
+        )
+        private_key_pem = ""
+
+    # Probe timestamp — same format SAP B1 uses for T126 queryDate
+    _probe_ts = datetime.now().strftime("%Y-%m-%d") + " 00:00:00"
+
     # ── Step 0: test the existing session key ─────────────────────────────
+    # Probe uses an AES-ENCRYPTED payload so EFRIS actually tries to decrypt
+    # our request.  This gives us EFRIS error 15 when the key is wrong
+    # (server-side decrypt failure) instead of only catching our own decrypt
+    # failures.  Rule:
+    #   • SESSION_EXPIRED          → our response-decrypt failed → key wrong
+    #   • EFRIS code "15"          → EFRIS request-decrypt failed → key wrong
+    #   • Anything else (incl "16")→ EFRIS DID decrypt our payload → key correct
     existing_key = None
     try:
         existing_key = client.key_manager.get_aes_key()
@@ -237,12 +257,33 @@ def get_symmetric_key(company: str) -> dict:
 
     if existing_key:
         client._aes_key = existing_key
+        _key_ok = False
         try:
             client.call(
-                "T126", payload=None, encrypt=False,
+                "T126",
+                payload={"queryDate": _probe_ts},
+                encrypt=True,
+                sign=bool(private_key_pem),
                 doc_type="__key_check__", doc_name="existing",
             )
-            # Existing key decrypts T126 — no T104 call needed
+            _key_ok = True   # returnCode "00" + decrypt succeeded
+        except EFRISAPIError as exc:
+            if exc.code not in ("SESSION_EXPIRED", "15"):
+                # EFRIS decrypted our request (returned other non-00 code) → key is valid
+                _key_ok = True
+                frappe.logger("efris").info(
+                    f"T104 skipped [{company}] — existing key OK "
+                    f"(T126 [{exc.code}] but our encrypted payload was accepted)"
+                )
+            else:
+                frappe.logger("efris").info(
+                    f"T104 [{company}]: existing key stale (T126 [{exc.code}]) "
+                    "— fetching fresh key via T104"
+                )
+        except Exception:
+            pass   # network error — can't verify, fall through to T104
+
+        if _key_ok:
             frappe.logger("efris").info(
                 f"T104 skipped [{company}] — existing session key still valid: {existing_key.hex()}"
             )
@@ -252,39 +293,9 @@ def get_symmetric_key(company: str) -> dict:
             )
             return {"status": "AES Key Valid (existing)", "key_bits": len(existing_key) * 8}
 
-        except EFRISAPIError as exc:
-            if exc.code != "SESSION_EXPIRED":
-                # AES decrypt succeeded; EFRIS returned a non-00 code for other reasons
-                frappe.logger("efris").info(
-                    f"T104 skipped [{company}] — existing key OK (T126 [{exc.code}] but decrypt passed)"
-                )
-                frappe.msgprint(
-                    f"✅ T104: Existing session key ({len(existing_key)*8}-bit) is still valid.",
-                    indicator="green",
-                )
-                return {"status": "AES Key Valid (existing)", "key_bits": len(existing_key) * 8}
-            # SESSION_EXPIRED → key is stale, fall through to T104
-            frappe.logger("efris").info(
-                f"T104 [{company}]: existing key expired — fetching fresh key via T104"
-            )
-            client._aes_key = None
-
-        except Exception:
-            # Network error — can't check; fall through to T104
-            client._aes_key = None
+        client._aes_key = None
 
     # ── Step 1: call T104 to get fresh passowrdDes ────────────────────────
-    try:
-        private_key_pem = client.key_manager.get_private_key()
-    except Exception as e:
-        # Private Key field is empty — T104 will still run but RSA-based candidates
-        # won't be available. Only raw/hash candidates will be tried (all likely wrong).
-        # User should paste SessionAESKey.txt content directly into the Session AES Key field.
-        frappe.logger("efris").warning(
-            f"T104 [{company}]: Private Key field is empty — "
-            f"RSA candidates unavailable. Consider pasting SessionAESKey.txt directly. Error: {e}"
-        )
-        private_key_pem = ""
 
     t104_result = client.call("T104", encrypt=False)
 
@@ -314,26 +325,45 @@ def get_symmetric_key(company: str) -> dict:
         + ", ".join(f"[{l}]={k.hex()[:16]}…" for l, k in candidates)
     )
 
-    # ── Probe T126 with each candidate — verified key decrypts without error ─
+    # ── Probe T126 with each candidate ────────────────────────────────────
+    #
+    # We send a REAL encrypted+signed T126 request (with queryDate payload).
+    # This means EFRIS actually tries to decrypt our request using its session
+    # key.  The key is confirmed or rejected by EFRIS's own decrypt:
+    #
+    #   EFRIS error "15" = Data decryption error
+    #       → EFRIS could NOT decrypt our AES-encrypted payload
+    #       → candidate key does NOT match the server session key → try next
+    #
+    #   Our internal SESSION_EXPIRED
+    #       → we could NOT decrypt EFRIS's AES-encrypted response
+    #       → candidate key is also wrong → try next
+    #
+    #   Any other outcome (returnCode "00", "16", "99", …)
+    #       → EFRIS DID decrypt our payload (no error 15)
+    #       → candidate key IS the correct session key → save and return
+    #
+    # This prevents the old bug where an empty/unencrypted probe could never
+    # trigger error 15 from EFRIS, so any non-SESSION_EXPIRED code (including
+    # error 15 for unrelated reasons) was wrongly treated as "key confirmed".
     network_error_label = None
     for label, key_bytes in candidates:
-        client._aes_key = key_bytes  # inject candidate into this client instance
+        client._aes_key = key_bytes
 
         try:
-            # T126 probe: empty payload, response is AES-encrypted with the session key.
-            # If AES decrypt succeeds → this is the correct key.
             client.call(
                 "T126",
-                payload=None,
-                encrypt=False,
+                payload={"queryDate": _probe_ts},
+                encrypt=True,
+                sign=bool(private_key_pem),
                 doc_type="__t104_probe__",
                 doc_name=label,
             )
-            # ✅ Got here → T126 decrypted successfully → key is correct
-            client.set_aes_key(key_bytes)       # persist to session_aes_key DB field
-            client._aes_key = key_bytes          # keep in cache
+            # ✅ returnCode "00" + response decrypt succeeded → key confirmed
+            client.set_aes_key(key_bytes)
+            client._aes_key = key_bytes
             frappe.logger("efris").info(
-                f"T104 ✅ [{company}] AES key confirmed by T126 probe [{label}]: "
+                f"T104 ✅ [{company}] AES key confirmed by encrypted T126 probe [{label}]: "
                 f"{len(key_bytes)*8}-bit  {key_bytes.hex()}"
             )
             frappe.msgprint(
@@ -343,21 +373,23 @@ def get_symmetric_key(company: str) -> dict:
             return {"status": "AES Key Set", "key_bits": len(key_bytes) * 8, "method": label}
 
         except EFRISAPIError as exc:
-            if exc.code == "SESSION_EXPIRED":
-                # AES decrypt failed for this candidate → try next
+            if exc.code in ("SESSION_EXPIRED", "15"):
+                # Wrong key: either EFRIS couldn't decrypt our request (15)
+                # or we couldn't decrypt the response (SESSION_EXPIRED).
                 frappe.logger("efris").warning(
-                    f"T104 candidate [{label}] SESSION_EXPIRED (wrong key)"
+                    f"T104 candidate [{label}] [{exc.code}] — wrong key, trying next"
                 )
                 client._aes_key = None
                 continue
-            # Non-SESSION_EXPIRED EFRIS error → AES decrypt DID succeed (got past it),
-            # EFRIS just returned a non-00 code for some other reason.
-            # The key is correct; save it and return.
+
+            # Any other EFRIS code (e.g. "16" signature error, "99" session) means
+            # EFRIS DID decrypt our AES-encrypted payload → key is correct.
             client.set_aes_key(key_bytes)
             client._aes_key = key_bytes
             frappe.logger("efris").info(
                 f"T104 ✅ [{company}] AES key confirmed [{label}] "
-                f"(T126 returned [{exc.code}] but decryption succeeded): {key_bytes.hex()}"
+                f"(EFRIS accepted our encrypted payload, returned [{exc.code}]): "
+                f"{key_bytes.hex()}"
             )
             frappe.msgprint(
                 f"✅ T104: Session AES key ({len(key_bytes)*8}-bit) saved to EFRIS Settings.",
@@ -366,9 +398,9 @@ def get_symmetric_key(company: str) -> dict:
             return {"status": "AES Key Set", "key_bits": len(key_bytes) * 8, "method": label}
 
         except Exception as exc:
-            # Network / HTTP error — can't tell if key is right
+            # Network / HTTP / signing error — can't determine key correctness
             frappe.logger("efris").warning(
-                f"T104 candidate [{label}] network error: {exc}"
+                f"T104 candidate [{label}] non-EFRIS error: {exc}"
             )
             if network_error_label is None:
                 network_error_label = label
@@ -671,16 +703,29 @@ def set_session_key(company: str, key_b64: str) -> dict:
     client = EFRISClient(company=company)
     client.set_aes_key(key_bytes)
 
-    # Immediately verify the key against T126
+    # Verify by sending an encrypted T126 probe.
+    # Error 15 = EFRIS can't decrypt our request → key wrong.
+    # SESSION_EXPIRED = we can't decrypt the response → key wrong.
+    # Anything else = key correct.
     client._aes_key = key_bytes
     verified = False
+    probe_ts = datetime.now().strftime("%Y-%m-%d") + " 00:00:00"
     try:
-        client.call("T126", payload=None, encrypt=False,
-                    doc_type="__key_set__", doc_name="manual")
+        private_key_pem = client.key_manager.get_private_key()
+    except Exception:
+        private_key_pem = ""
+    try:
+        client.call(
+            "T126",
+            payload={"queryDate": probe_ts},
+            encrypt=True,
+            sign=bool(private_key_pem),
+            doc_type="__key_set__", doc_name="manual",
+        )
         verified = True
     except EFRISAPIError as exc:
-        if exc.code != "SESSION_EXPIRED":
-            verified = True   # decrypt succeeded; EFRIS returned other error
+        if exc.code not in ("SESSION_EXPIRED", "15"):
+            verified = True   # EFRIS decrypted our request, returned other code
     except Exception:
         pass   # network issue — key is saved, can't verify now
 
@@ -792,11 +837,25 @@ def test_session_key(company: str) -> dict:
 
     client._aes_key = key_bytes
 
+    # Use encrypted probe: error 15 = EFRIS can't decrypt our request → key wrong.
+    # SESSION_EXPIRED = we can't decrypt response → key wrong.
+    # Anything else = EFRIS accepted our encrypted payload → key correct.
+    probe_ts = datetime.now().strftime("%Y-%m-%d") + " 00:00:00"
     try:
-        client.call("T126", payload=None, encrypt=False,
-                    doc_type="__key_test__", doc_name="test")
+        _priv = client.key_manager.get_private_key()
+    except Exception:
+        _priv = ""
+
+    try:
+        client.call(
+            "T126",
+            payload={"queryDate": probe_ts},
+            encrypt=True,
+            sign=bool(_priv),
+            doc_type="__key_test__", doc_name="test",
+        )
         frappe.msgprint(
-            f"✅ Session key ({len(key_bytes)*8}-bit) is VALID — T126 decrypts successfully.<br>"
+            f"✅ Session key ({len(key_bytes)*8}-bit) is VALID — T126 encrypted probe accepted.<br>"
             f"Key hex: <code>{key_bytes.hex()}</code><br>"
             f"Key b64: <code>{_b64.b64encode(key_bytes).decode()}</code>",
             indicator="green",
@@ -805,9 +864,10 @@ def test_session_key(company: str) -> dict:
         return {"status": "valid", "key_bits": len(key_bytes) * 8, "key_hex": key_bytes.hex()}
 
     except EFRISAPIError as exc:
-        if exc.code == "SESSION_EXPIRED":
+        if exc.code in ("SESSION_EXPIRED", "15"):
             frappe.msgprint(
-                f"❌ Session key ({len(key_bytes)*8}-bit) is EXPIRED / WRONG.<br><br>"
+                f"❌ Session key ({len(key_bytes)*8}-bit) is WRONG / EXPIRED.<br>"
+                f"EFRIS returned [{exc.code}]: {exc.message}<br><br>"
                 f"Key hex: <code>{key_bytes.hex()}</code><br><br>"
                 f"<b>Options to recover</b>:<br>"
                 f"1. Click <b>Full Initialise</b> (T101 → T103 → T104) to get a fresh session key.<br>"
@@ -818,9 +878,10 @@ def test_session_key(company: str) -> dict:
             )
             return {"status": "expired", "key_hex": key_bytes.hex()}
         else:
+            # EFRIS accepted our encrypted request, returned non-00 for another reason
             frappe.msgprint(
                 f"✅ Session key ({len(key_bytes)*8}-bit) is VALID "
-                f"(T126 [{exc.code}] but decrypt passed).<br>"
+                f"(EFRIS accepted encrypted payload, returned [{exc.code}]).<br>"
                 f"Key hex: <code>{key_bytes.hex()}</code>",
                 indicator="green",
                 title="Session Key Valid",
