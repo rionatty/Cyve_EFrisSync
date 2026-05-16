@@ -106,24 +106,28 @@ CUSTOM_FIELDS = {
     ],
 
     # ─── Item ──────────────────────────────────────────────────────────────
-    # Tab Break converts the old Section into a full tab between Details and Inventory.
+    # Tab Break placed after `item_defaults` (last field of the second "Details"
+    # tab in the standard ERPNext Item form) so it appears BEFORE "Inventory".
     # All SAP B1 EFRIS item UDFs are mapped here (ItemMaster.cs / ExciseDuty.cs).
     "Item": [
-        # ── Tab ────────────────────────────────────────────────────────────
+        # ── Tab ─────────────────────────────────────────────────────────────
+        # insert_after="item_defaults" places this tab between the second
+        # Details tab and the standard Inventory tab in ERPNext v15/v16.
         {
-            "fieldname": "efris_section",
-            "fieldtype": "Tab Break",
-            "label":     "EFRIS / URA",
-            "insert_after": "taxes",
+            "fieldname":    "efris_section",
+            "fieldtype":    "Tab Break",
+            "label":        "URA Setting",
+            "insert_after": "item_defaults",
         },
 
-        # ── Left column ─────────────────────────────────────────────────────
+        # ── Left column ──────────────────────────────────────────────────────
+        # Mirror SAP B1 ItemMaster form field order exactly.
         {
             "fieldname":   "efris_upload_type",
             "fieldtype":   "Select",
             "label":       "Upload Type On EFRIS",
-            "options":     "\n1\n2",
-            "description": "1 = Upload to EFRIS, 2 = Do Not Upload",
+            "options":     "\nAdd\nUpdate",
+            "description": "Add = register new goods on EFRIS (T130).  Update = modify existing goods (T131).",
         },
         {
             "fieldname": "efris_goods_type",
@@ -174,7 +178,7 @@ CUSTOM_FIELDS = {
             "label":     "Have Excise Tax",
             "options":   "\nYes\nNo",
         },
-        # Keep legacy checkbox for backward-compat with existing invoice logic
+        # Legacy hidden checkbox — kept for backward-compat with invoice submission logic
         {
             "fieldname": "efris_excise_flag",
             "fieldtype": "Check",
@@ -182,7 +186,7 @@ CUSTOM_FIELDS = {
             "hidden":    1,
         },
 
-        # ── Column Break ────────────────────────────────────────────────────
+        # ── Column Break ─────────────────────────────────────────────────────
         {"fieldname": "efris_col_break", "fieldtype": "Column Break"},
 
         # ── Right column ─────────────────────────────────────────────────────
