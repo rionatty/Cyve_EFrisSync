@@ -15,6 +15,7 @@ frappe.ui.form.on("EFRIS Settings", {
     refresh(frm) {
         _add_action_buttons(frm);
         _add_init_buttons(frm);
+        _add_recovery_buttons(frm);
         _show_init_status(frm);
     },
 
@@ -144,6 +145,74 @@ function _show_init_status(frm) {
             colour, true
         );
     }
+}
+
+
+// ─── Key Recovery buttons ─────────────────────────────────────────────────────
+
+function _add_recovery_buttons(frm) {
+
+    // ── Test current session key against T126 ────────────────────────────
+    frm.add_custom_button(__("🔍 Test Session Key"), () => {
+        frappe.call({
+            method: "efris_integration.api.auth.test_session_key",
+            freeze: true,
+            freeze_message: __("Testing session AES key against T126…"),
+        });
+    }, __("Key Recovery"));
+
+    // ── Generate new RSA key pair ────────────────────────────────────────
+    frm.add_custom_button(__("🔐 Generate Key Pair"), () => {
+        frappe.confirm(
+            __("<b>Generate a new 2048-bit RSA key pair?</b><br><br>"
+             + "This will <b>overwrite</b> the current PrivateKey.txt.<br>"
+             + "After generating, you must register the new public key with "
+             + "the EFRIS portal before T104 will work again.<br><br>"
+             + "Proceed?"),
+            () => {
+                frappe.call({
+                    method: "efris_integration.api.auth.generate_key_pair",
+                    freeze: true,
+                    freeze_message: __("Generating RSA key pair…"),
+                    callback(r) {
+                        if (!r.exc) frm.reload_doc();
+                    }
+                });
+            }
+        );
+    }, __("Key Recovery"));
+
+    // ── Manually set/restore session AES key ────────────────────────────
+    frm.add_custom_button(__("✏️ Set Session Key"), () => {
+        const d = new frappe.ui.Dialog({
+            title: __("Set Session AES Key Manually"),
+            fields: [
+                {
+                    label: __("Session Key (Base64)"),
+                    fieldname: "key_b64",
+                    fieldtype: "Data",
+                    reqd: 1,
+                    description: __("Paste the Base64-encoded AES session key here. "
+                        + "Must decode to exactly 16, 24, or 32 bytes. "
+                        + "Example: x/SVvBh4S49ddPNX+nXQYg=="),
+                },
+            ],
+            primary_action_label: __("Save & Test"),
+            primary_action(values) {
+                d.hide();
+                frappe.call({
+                    method: "efris_integration.api.auth.set_session_key",
+                    args:   { key_b64: values.key_b64 },
+                    freeze: true,
+                    freeze_message: __("Saving session key…"),
+                    callback(r) {
+                        if (!r.exc) frm.reload_doc();
+                    }
+                });
+            }
+        });
+        d.show();
+    }, __("Key Recovery"));
 }
 
 
