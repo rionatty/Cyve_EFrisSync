@@ -108,7 +108,11 @@ class EFRISClient:
         )
 
         if return_code != "00":
-            raise EFRISAPIError(return_code, return_msg)
+            # For "partial failure" (45) and similar batch codes, EFRIS puts the
+            # per-item field errors inside the encrypted response body.
+            # Decrypt it here so callers get actionable detail, not just "Partial failure!".
+            detail = _extract_error_detail(response.get("data", {}), self._get_aes_key)
+            raise EFRISAPIError(return_code, return_msg + (f" | {detail}" if detail else ""))
 
         # ── Decrypt response ───────────────────────────────────────────
         resp_data = response.get("data", {})
@@ -303,6 +307,51 @@ class EFRISClient:
             frappe.throw(
                 f"EFRIS returned invalid JSON. Raw: {exc}"
             )
+
+
+def _extract_error_detail(resp_data: dict, get_key_fn) -> str:
+    """
+    For T130/T131 "partial failure" (code 45), EFRIS returns per-item errors
+    inside the encrypted response body.  Decrypt it and build a readable summary.
+
+    Returns an empty string if decryption fails or no per-item errors are found.
+    """
+    try:
+        from efris_integration.utils.encryption import decode_response_data as _decode
+
+        content = resp_data.get("content", "")
+        if not content:
+            return ""
+
+        desc = resp_data.get("dataDescription", {})
+        encrypt_code = str(desc.get("encryptCode", "0"))
+
+        if encrypt_code == "2":
+            items = _decode(resp_data, get_key_fn())
+        else:
+            items = _parse_plain_content(content)
+
+        # Normalise to list
+        if isinstance(items, dict):
+            items = items.get("data", [items])
+        if not isinstance(items, list):
+            return ""
+
+        msgs = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            rc  = str(item.get("returnCode") or item.get("returncode") or "")
+            rm  = str(item.get("returnMessage") or item.get("returnmessage") or "")
+            gc  = str(item.get("goodsCode") or item.get("goodscode") or "")
+            if rc and rc != "00":
+                label = f"{gc}: " if gc else ""
+                msgs.append(f"{label}[{rc}] {rm}")
+
+        return " | ".join(msgs) if msgs else ""
+
+    except Exception:
+        return ""
 
 
 def _parse_plain_content(content) -> dict:
