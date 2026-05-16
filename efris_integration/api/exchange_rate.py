@@ -105,13 +105,43 @@ def sync_exchange_rates(
             current += timedelta(days=1)
             continue
 
+        # Log the first item of each day's response so we can see the exact
+        # field names EFRIS returns (check Error Log → "EFRIS T126 Rate Item Shape")
+        if rate_list:
+            frappe.log_error(
+                f"T126 [{company}] {date_str}: {len(rate_list)} items.\n"
+                f"First item keys: {list(rate_list[0].keys()) if isinstance(rate_list[0], dict) else rate_list[0]}\n"
+                f"First item: {rate_list[0]}",
+                "EFRIS T126 Rate Item Shape",
+            )
+
         for item in rate_list:
-            currency = (item.get("currency") or "").strip().upper()
-            rate_val = item.get("rate")
+            if not isinstance(item, dict):
+                continue
+
+            # Try every field name variant EFRIS may use for the currency code
+            currency = (
+                item.get("currency")
+                or item.get("currencyCode")
+                or item.get("Currency")
+                or item.get("CurrencyCode")
+                or ""
+            )
+            currency = str(currency).strip().upper()
+
+            # Try every field name variant for the exchange rate value
+            rate_val = (
+                item.get("rate")
+                or item.get("exchangeRate")
+                or item.get("Rate")
+                or item.get("ExchangeRate")
+                or item.get("rateValue")
+                or item.get("midRate")
+            )
 
             if not currency or rate_val is None:
                 continue
-            if currency == "UGX":
+            if currency in ("UGX", ""):
                 continue
 
             try:
@@ -276,20 +306,39 @@ def _extract_rate_list(result) -> list:
     """
     Extract the List<T120> from the decrypted T126 response.
 
-    T126 returns the rate list either:
-      • Directly as a JSON array (most common)
-      • Wrapped in a dict with key "data", "rates", "exchangeRates", or "rateList"
+    EFRIS can return the rate list in several forms:
+      • Directly as a JSON array                   → [{"currency":"USD","rate":"3850"}]
+      • Wrapped in a dict with a known key         → {"data":[...]}
+      • Wrapped with an unknown key                → {"someKey":[...]}
+      • Single item dict (only one currency)       → {"currency":"USD","rate":"3850"}
     """
     if isinstance(result, list):
+        # Direct array — most common
+        # Flatten if it's a list-of-lists (rare)
+        if result and isinstance(result[0], list):
+            flat = []
+            for sub in result:
+                flat.extend(sub)
+            return flat
         return result
+
     if isinstance(result, dict):
-        for key in ("data", "rates", "exchangeRates", "rateList"):
+        # Known wrapper keys (try all variants)
+        for key in ("data", "rates", "exchangeRates", "rateList",
+                    "Data", "Rates", "ExchangeRates", "RateList"):
             val = result.get(key)
             if isinstance(val, list):
                 return val
+
+        # Any list value in the dict
         for val in result.values():
-            if isinstance(val, list):
+            if isinstance(val, list) and val:
                 return val
+
+        # Dict is itself one rate record (single currency response)
+        if "currency" in result or "currencyCode" in result:
+            return [result]
+
     return []
 
 
