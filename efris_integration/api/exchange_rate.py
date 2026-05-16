@@ -6,7 +6,7 @@ Mirrors EXACTLY: ExchangeRateForm.cs → FetchAndUpdateRatesForRange()
 
 SAP B1 flow (ExchangeRateForm.cs):
   1. Loop day-by-day from fromDate to toDate.
-  2. For each day build payload: {"issueDate":"yyyy-MM-dd"}
+  2. For each day build payload: {"queryDate":"yyyy-MM-dd 00:00:00"}
   3. AES-ECB encrypt the JSON using the session AES key.
   4. Sign the base64(encrypted) string with RSA SHA1 PKCS1.
   5. POST T126 with Content=contentB64 + Signature.
@@ -38,7 +38,7 @@ def sync_exchange_rates(
 
     Mirrors ExchangeRateForm.cs → FetchAndUpdateRatesForRange() exactly:
       • One T126 call per calendar day in [from_date, to_date]
-      • Payload = AES-encrypted {"issueDate":"yyyy-MM-dd"} + RSA-SHA1 signature
+      • Payload = AES-encrypted {"queryDate":"yyyy-MM-dd 00:00:00"} + RSA-SHA1 signature
       • Failed days are skipped (logged); the loop continues
     """
     if not company:
@@ -74,11 +74,12 @@ def sync_exchange_rates(
     days_total = (d_to - d_from).days + 1
 
     while current <= d_to:
-        date_str     = current.isoformat()           # "yyyy-MM-dd"  ← T126 issueDate format
+        date_str     = current.isoformat()           # "yyyy-MM-dd"
+        query_ts     = date_str + " 00:00:00"        # T126 queryDate format per ExchangeRateForm.cs
         erpnext_date = current.strftime("%Y-%m-%d")
 
         try:
-            rate_list = _fetch_rates_for_date(client, company, date_str, date_str)
+            rate_list = _fetch_rates_for_date(client, company, query_ts, date_str)
         except EFRISAPIError as exc:
             # Non-00 returnCode for this date — log and continue (mirrors SAP B1)
             short_msg = (
@@ -266,14 +267,16 @@ def sync_exchange_rates_all_companies(from_date: str = None, to_date: str = None
 def _fetch_rates_for_date(
     client: EFRISClient,
     company: str,
-    issue_date: str,
+    query_ts: str,
     date_label: str,
 ) -> list:
     """
     Call T126 for a single date.
 
-    EFRIS API doc (T126 request):
-        {"issueDate": "yyyy-MM-dd"}   ← date only, no time component
+    ExchangeRateForm.cs (the working C# source):
+        string queryDate = date.ToString("yyyy-MM-dd") + " 00:00:00";
+        string queryJson = "{\"queryDate\":\"" + queryDate + "\"}";
+        → payload: {"queryDate": "yyyy-MM-dd 00:00:00"}
 
     Encrypted: AES-128-ECB with session AES key  (encryptCode=2, zipCode=0)
     Signed:    RSA SHA1 PKCS1v1.5 of base64(encrypted content)
@@ -285,7 +288,7 @@ def _fetch_rates_for_date(
     On these codes, refresh the session once and retry.
     """
     try:
-        result = _call_t126_for_date(client, issue_date, date_label)
+        result = _call_t126_for_date(client, query_ts, date_label)
     except EFRISAPIError as exc:
         if exc.code not in ("SESSION_EXPIRED", "15", "16", "99"):
             raise   # real EFRIS error — let caller handle
@@ -308,24 +311,26 @@ def _fetch_rates_for_date(
                 f"Detail: {short}",
             ) from refresh_exc
 
-        result = _call_t126_for_date(client, issue_date, date_label)   # may raise again
+        result = _call_t126_for_date(client, query_ts, date_label)   # may raise again
 
     return _extract_rate_list(result)
 
 
-def _call_t126_for_date(client: EFRISClient, issue_date: str, date_label: str) -> dict:
+def _call_t126_for_date(client: EFRISClient, query_ts: str, date_label: str) -> dict:
     """
-    POST T126 with AES-encrypted + RSA-signed issueDate payload.
+    POST T126 with AES-encrypted + RSA-signed queryDate payload.
 
-    EFRIS API doc (T126):
-        Request field : issueDate  format "yyyy-MM-dd"  (NOT queryDate, NOT timestamp)
-        Request  Encrypted: Y  → AES-ECB with session key
-        Response Encrypted: Y  → AES-ECB with session key
-        Response fields per item: currency, rate, importDutyLevy, inComeTax, exportLevy
+    Mirrors ExchangeRateForm.cs exactly:
+        string queryDate = date.ToString("yyyy-MM-dd") + " 00:00:00";
+        string queryJson = "{\"queryDate\":\"" + queryDate + "\"}";
+        contentB64 = Base64(AES.Encrypt(UTF8(queryJson), aesKey))
+        signature  = Base64(RSA.SignData(UTF8(contentB64), SHA1, PKCS1))
+
+    T120 response fields: currency, rate, nowTime
     """
     return client.call(
         "T126",
-        payload={"issueDate": issue_date},   # "yyyy-MM-dd"
+        payload={"queryDate": query_ts},     # "yyyy-MM-dd 00:00:00"
         encrypt=True,   # AES-ECB encrypt with session key  → encryptCode=2
         sign=True,      # RSA SHA1 PKCS1 signature of contentB64
         doc_type="Currency Exchange",

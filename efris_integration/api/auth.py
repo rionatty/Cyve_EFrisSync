@@ -238,8 +238,8 @@ def get_symmetric_key(company: str) -> dict:
         )
         private_key_pem = ""
 
-    # Probe date — T126 issueDate field is "yyyy-MM-dd" (no time component, per EFRIS API doc)
-    _probe_ts = datetime.now().strftime("%Y-%m-%d")
+    # Probe date — T126 queryDate field format "yyyy-MM-dd 00:00:00" (matches working C# ExchangeRateForm.cs)
+    _probe_ts = datetime.now().strftime("%Y-%m-%d") + " 00:00:00"
 
     # ── Step 0: test the existing session key ─────────────────────────────
     # Probe uses an AES-ENCRYPTED payload so EFRIS actually tries to decrypt
@@ -261,7 +261,7 @@ def get_symmetric_key(company: str) -> dict:
         try:
             client.call(
                 "T126",
-                payload={"issueDate": _probe_ts},
+                payload={"queryDate": _probe_ts},
                 encrypt=True,
                 sign=bool(private_key_pem),
                 doc_type="__key_check__", doc_name="existing",
@@ -372,7 +372,7 @@ def get_symmetric_key(company: str) -> dict:
         try:
             client.call(
                 "T126",
-                payload={"issueDate": _probe_ts},
+                payload={"queryDate": _probe_ts},
                 encrypt=True,
                 sign=bool(private_key_pem),
                 doc_type="__t104_probe__",
@@ -546,37 +546,75 @@ def _build_aes_key_candidates(
         # 1d. MD5 of sign field (16 bytes — commonly used in Chinese payment systems)
         _add("sign-md5", hashlib.md5(sign_bytes).digest())
 
-    # ── 2. RSA PKCS1v1.5 (official URA — should be correct when private key matches) ──
+    # ── 2. RSA PKCS1v1.5 (official URA T104 decrypt — C# ARInvoice.cs lines 683-685) ──
+    #
+    # CRITICAL: EFRIS does NOT encrypt the raw AES key bytes.
+    # It encrypts the BASE64 STRING of the AES key.
+    #
+    # C# exact flow:
+    #   byte[] numArray1 = rSACng.Decrypt(FromBase64(passowrdDes), RSAEncryptionPadding.Pkcs1)
+    #   string str = Encoding.UTF8.GetString(numArray1)   ← base64 string, e.g. "x/SVv...g=="
+    #   File.WriteAllText(SessionAESKey, str)
+    # Then when using:
+    #   byte[] aesKey = Convert.FromBase64String(File.ReadAllText(SessionAESKey))
+    #
+    # So: actual_AES_key = base64_decode( utf8_decode( RSA_PKCS1v1.5_decrypt(passowrdDes) ) )
     if private_key_pem and raw_passowrdDes:
         try:
             rsa_key  = _import_rsa_key(private_key_pem)
             sentinel = object()
             v15      = PKCS1_v1_5.new(rsa_key).decrypt(raw_passowrdDes, sentinel)
             if v15 is not sentinel:
+                # v15 is the UTF-8 bytes of the base64 string of the AES key
+                # e.g., b"x/SVvBh4S49ddPNX+nXQYg==" (22 bytes, NOT the AES key itself)
                 frappe.logger("efris").info(
-                    f"PKCS1v1.5 raw result: {len(v15)} bytes  hex={v15.hex()}"
+                    f"PKCS1v1.5 raw result: {len(v15)} bytes  "
+                    f"text='{v15[:40].decode('utf-8', errors='replace')}'"
                 )
-                _add("pkcs1v15-full", v15)
+                # ★ PRIMARY candidate: base64-decode the UTF-8 string → actual AES key ★
+                try:
+                    v15_str = v15.decode("utf-8").strip()
+                    actual  = _b64.b64decode(v15_str + "=" * (-len(v15_str) % 4))
+                    _add("pkcs1v15-b64decoded", actual)   # ← this is the real key
+                    frappe.logger("efris").info(
+                        f"pkcs1v15-b64decoded: {len(actual)} bytes  hex={actual.hex()}"
+                    )
+                except Exception as e2:
+                    frappe.logger("efris").warning(f"pkcs1v15 b64decode step failed: {e2}")
+
+                # Fallback: treat raw bytes directly (in case EFRIS changed format)
+                _add("pkcs1v15-raw", v15)
                 if len(v15) >= 16:
-                    _add("pkcs1v15-first16", v15[:16])
-                if len(v15) >= 16:
-                    _add("pkcs1v15-last16",  v15[-16:])
+                    _add("pkcs1v15-raw16", v15[:16])
+                if len(v15) >= 32:
+                    _add("pkcs1v15-raw32", v15[:32])
             else:
-                frappe.logger("efris").warning("PKCS1v1.5 returned sentinel")
+                frappe.logger("efris").warning(
+                    "PKCS1v1.5 returned sentinel — private key does NOT match EFRIS public key. "
+                    "Copy PrivateKey.txt from the SAP B1 server into the Private Key field."
+                )
         except Exception as exc:
             frappe.logger("efris").warning(f"PKCS1v1.5 exception: {exc}")
 
-    # ── 3. RSA OAEP ───────────────────────────────────────────────────────
+    # ── 3. RSA OAEP (fallback only — EFRIS spec uses PKCS1v1.5) ─────────
     if private_key_pem and raw_passowrdDes:
         try:
-            rsa_key = _import_rsa_key(private_key_pem)
-            oaep    = _OAEP.new(rsa_key).decrypt(raw_passowrdDes)
+            rsa_key  = _import_rsa_key(private_key_pem)
+            oaep     = _OAEP.new(rsa_key).decrypt(raw_passowrdDes)
             frappe.logger("efris").info(
-                f"OAEP raw result: {len(oaep)} bytes  hex={oaep.hex()}"
+                f"OAEP raw result: {len(oaep)} bytes  "
+                f"text='{oaep[:40].decode('utf-8', errors='replace')}'"
             )
-            _add("oaep-full", oaep)
+            # Same decode: OAEP plaintext may also be a base64 string
+            try:
+                oaep_str = oaep.decode("utf-8").strip()
+                actual   = _b64.b64decode(oaep_str + "=" * (-len(oaep_str) % 4))
+                _add("oaep-b64decoded", actual)
+            except Exception:
+                pass
+            _add("oaep-raw", oaep)
             if len(oaep) >= 16:
-                _add("oaep-first16", oaep[:16])
+                _add("oaep-raw16", oaep[:16])
         except Exception as exc:
             frappe.logger("efris").warning(f"OAEP exception: {exc}")
 
@@ -782,7 +820,7 @@ def set_session_key(company: str, key_b64: str) -> dict:
     # Anything else = key correct.
     client._aes_key = key_bytes
     verified = False
-    probe_ts = datetime.now().strftime("%Y-%m-%d")
+    probe_ts = datetime.now().strftime("%Y-%m-%d") + " 00:00:00"
     try:
         private_key_pem = client.key_manager.get_private_key()
     except Exception:
@@ -790,7 +828,7 @@ def set_session_key(company: str, key_b64: str) -> dict:
     try:
         client.call(
             "T126",
-            payload={"issueDate": probe_ts},
+            payload={"queryDate": probe_ts},
             encrypt=True,
             sign=bool(private_key_pem),
             doc_type="__key_set__", doc_name="manual",
@@ -913,7 +951,7 @@ def test_session_key(company: str) -> dict:
     # Use encrypted probe: error 15 = EFRIS can't decrypt our request → key wrong.
     # SESSION_EXPIRED = we can't decrypt response → key wrong.
     # Anything else = EFRIS accepted our encrypted payload → key correct.
-    probe_ts = datetime.now().strftime("%Y-%m-%d")
+    probe_ts = datetime.now().strftime("%Y-%m-%d") + " 00:00:00"
     try:
         _priv = client.key_manager.get_private_key()
     except Exception:
@@ -922,7 +960,7 @@ def test_session_key(company: str) -> dict:
     try:
         client.call(
             "T126",
-            payload={"issueDate": probe_ts},
+            payload={"queryDate": probe_ts},
             encrypt=True,
             sign=bool(_priv),
             doc_type="__key_test__", doc_name="test",
