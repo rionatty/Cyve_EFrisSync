@@ -268,8 +268,10 @@ def get_symmetric_key(company: str) -> dict:
             )
             _key_ok = True   # returnCode "00" + decrypt succeeded
         except EFRISAPIError as exc:
-            if exc.code not in ("SESSION_EXPIRED", "15"):
-                # EFRIS decrypted our request (returned other non-00 code) → key is valid
+            # 15 / SESSION_EXPIRED / 2066 all mean our AES-encrypted payload produced
+            # garbage when EFRIS decrypted it → existing key is stale
+            if exc.code not in ("SESSION_EXPIRED", "15", "2066", "9999", "9998"):
+                # EFRIS decrypted our request and processed it → key is valid
                 _key_ok = True
                 frappe.logger("efris").info(
                     f"T104 skipped [{company}] — existing key OK "
@@ -277,8 +279,8 @@ def get_symmetric_key(company: str) -> dict:
                 )
             else:
                 frappe.logger("efris").info(
-                    f"T104 [{company}]: existing key stale (T126 [{exc.code}]) "
-                    "— fetching fresh key via T104"
+                    f"T104 [{company}]: existing key stale (T126 [{exc.code}] "
+                    f"'{exc.message[:60]}') — fetching fresh key via T104"
                 )
         except Exception:
             pass   # network error — can't verify, fall through to T104
@@ -392,22 +394,32 @@ def get_symmetric_key(company: str) -> dict:
             return {"status": "AES Key Set", "key_bits": len(key_bytes) * 8, "method": label}
 
         except EFRISAPIError as exc:
-            if exc.code in ("SESSION_EXPIRED", "15"):
-                # Wrong key: either EFRIS couldn't decrypt our request (15)
-                # or we couldn't decrypt the response (SESSION_EXPIRED).
+            # Codes that mean EFRIS decrypted but got garbage → wrong key:
+            #
+            #   "15"           — Data decryption error (PKCS7 unpad failed → definitely wrong key)
+            #   SESSION_EXPIRED— We couldn't decrypt EFRIS's response → wrong key
+            #   "2066"         — "Illegal json format": EFRIS decrypted our payload but got
+            #                    garbage bytes (PKCS7 unpad succeeded by chance, then JSON
+            #                    parse failed because the decrypted bytes aren't valid JSON).
+            #                    This is a wrong-key indicator, just a different failure mode.
+            #   "9999"/"9998"  — Generic decrypt/format errors in some EFRIS environments
+            _WRONG_KEY_CODES = {"SESSION_EXPIRED", "15", "2066", "9999", "9998"}
+            if exc.code in _WRONG_KEY_CODES:
                 frappe.logger("efris").warning(
-                    f"T104 candidate [{label}] [{exc.code}] — wrong key, trying next"
+                    f"T104 candidate [{label}] [{exc.code}] '{exc.message[:80]}' "
+                    "— wrong key (decrypted to garbage), trying next"
                 )
                 client._aes_key = None
                 continue
 
-            # Any other EFRIS code (e.g. "16" signature error, "99" session) means
-            # EFRIS DID decrypt our AES-encrypted payload → key is correct.
+            # Any other EFRIS code means EFRIS successfully decrypted our payload
+            # and processed the request (returned a business-logic error, not a
+            # decrypt error). The AES key is correct → save it.
             client.set_aes_key(key_bytes)
             client._aes_key = key_bytes
             frappe.logger("efris").info(
                 f"T104 ✅ [{company}] AES key confirmed [{label}] "
-                f"(EFRIS accepted our encrypted payload, returned [{exc.code}]): "
+                f"(EFRIS processed our encrypted payload, returned [{exc.code}]): "
                 f"{key_bytes.hex()}"
             )
             frappe.msgprint(
@@ -835,8 +847,8 @@ def set_session_key(company: str, key_b64: str) -> dict:
         )
         verified = True
     except EFRISAPIError as exc:
-        if exc.code not in ("SESSION_EXPIRED", "15"):
-            verified = True   # EFRIS decrypted our request, returned other code
+        if exc.code not in ("SESSION_EXPIRED", "15", "2066", "9999", "9998"):
+            verified = True   # EFRIS decrypted our request and processed it
     except Exception:
         pass   # network issue — key is saved, can't verify now
 
@@ -975,7 +987,7 @@ def test_session_key(company: str) -> dict:
         return {"status": "valid", "key_bits": len(key_bytes) * 8, "key_hex": key_bytes.hex()}
 
     except EFRISAPIError as exc:
-        if exc.code in ("SESSION_EXPIRED", "15"):
+        if exc.code in ("SESSION_EXPIRED", "15", "2066", "9999", "9998"):
             frappe.msgprint(
                 f"❌ Session key ({len(key_bytes)*8}-bit) is WRONG / EXPIRED.<br>"
                 f"EFRIS returned [{exc.code}]: {exc.message}<br><br>"

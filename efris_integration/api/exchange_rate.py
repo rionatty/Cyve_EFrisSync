@@ -290,8 +290,14 @@ def _fetch_rates_for_date(
     try:
         result = _call_t126_for_date(client, query_ts, date_label)
     except EFRISAPIError as exc:
-        if exc.code not in ("SESSION_EXPIRED", "15", "16", "99"):
-            raise   # real EFRIS error — let caller handle
+        # Codes that mean our AES session key is wrong/stale:
+        #   "15"   — EFRIS PKCS7 unpad failed (definitely wrong key)
+        #   "2066" — "Illegal json format": EFRIS decrypted to garbage (wrong key,
+        #            PKCS7 happened to pass but result isn't valid JSON)
+        #   "16"   — Signature verification error (session mismatch)
+        #   "99"   — General session error
+        if exc.code not in ("SESSION_EXPIRED", "15", "2066", "16", "99"):
+            raise   # real EFRIS business error — let caller handle
 
         # Session expired → refresh and retry once
         frappe.logger("efris").info(
