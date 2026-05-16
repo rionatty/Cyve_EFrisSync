@@ -13,14 +13,20 @@
 
 frappe.ui.form.on("Customer", {
 
-    // ── Toolbar button added on every form refresh ────────────────────────────
+    // ── Toolbar button — added (and styled) on every form refresh ─────────────
     refresh(frm) {
-        frm.add_custom_button(__("Verify TIN"), function () {
+        // add_custom_button returns the <button> jQuery element.
+        // Assign first, style separately so a null return never throws.
+        const $btn = frm.add_custom_button(__("Verify TIN"), () => {
             efris_verify_tin(frm);
-        })
-        // Style: outlined blue so it stands out but doesn't clash with Save
-        .removeClass("btn-default")
-        .addClass("btn-primary");
+        });
+
+        if ($btn && $btn.length) {
+            $btn
+                .removeClass("btn-default btn-secondary")
+                .addClass("btn-primary")
+                .css({ "font-weight": "600" });
+        }
     },
 
     // ── Keep legacy efris_buyer_type in sync when Business Type changes ───────
