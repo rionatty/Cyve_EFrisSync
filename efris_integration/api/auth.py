@@ -200,24 +200,73 @@ def sign_in() -> dict:
 @frappe.whitelist()
 def get_symmetric_key() -> dict:
     """
-    T104 — Get the session AES key from EFRIS and verify it works.
+    T104 — Verify or refresh the session AES key.
 
     Strategy:
-      1. Call T104 → receive passowrdDes (RSA-encrypted AES key)
-      2. Build every plausible candidate AES key from passowrdDes
-         (PKCS1v1.5, OAEP, raw slices, hashes)
-      3. Immediately probe T126 with each candidate until one decrypts
-         the T126 response without error — that is the correct AES key
-      4. Save the verified key to SessionAESKey.txt and return
+      0. Test the EXISTING session key against T126 first.
+         If it still works → return immediately without calling T104.
+         This preserves a valid key even when the private key file is
+         incorrect (RSA decrypt of passowrdDes gives wrong results).
 
-    This approach completely bypasses the "which RSA padding does EFRIS use?"
-    question by letting T126's AES decryption be the arbiter of correctness.
+      1. If the existing key is expired (SESSION_EXPIRED) or missing:
+         Call T104 → get passowrdDes → build candidate AES keys
+         (PKCS1v1.5, OAEP, raw slices, hashes) → probe each with T126.
+
+      2. Save the first candidate whose T126 decrypt succeeds.
+
+    NOTE: If all T104 candidates fail it means the private key in
+    PrivateKey.txt does NOT match the public key registered with EFRIS.
+    The long-term fix is to re-register a new key pair with EFRIS.
     """
     import base64 as _b64
     import hashlib
 
     client = EFRISClient()
 
+    # ── Step 0: test the existing session key ─────────────────────────────
+    existing_key = None
+    try:
+        existing_key = client.key_manager.get_aes_key()
+    except Exception:
+        pass
+
+    if existing_key:
+        client._aes_key = existing_key
+        try:
+            client.call(
+                "T126", payload=None, encrypt=False,
+                doc_type="__key_check__", doc_name="existing",
+            )
+            # Existing key decrypts T126 — no T104 call needed
+            frappe.logger("efris").info(
+                f"T104 skipped — existing session key still valid: {existing_key.hex()}"
+            )
+            frappe.msgprint(
+                f"✅ T104: Existing session key ({len(existing_key)*8}-bit) is still valid.",
+                indicator="green",
+            )
+            return {"status": "AES Key Valid (existing)", "key_bits": len(existing_key) * 8}
+
+        except EFRISAPIError as exc:
+            if exc.code != "SESSION_EXPIRED":
+                # AES decrypt succeeded; EFRIS returned a non-00 code for other reasons
+                frappe.logger("efris").info(
+                    f"T104 skipped — existing key OK (T126 [{exc.code}] but decrypt passed)"
+                )
+                frappe.msgprint(
+                    f"✅ T104: Existing session key ({len(existing_key)*8}-bit) is still valid.",
+                    indicator="green",
+                )
+                return {"status": "AES Key Valid (existing)", "key_bits": len(existing_key) * 8}
+            # SESSION_EXPIRED → key is stale, fall through to T104
+            frappe.logger("efris").info("T104: existing key expired — fetching fresh key via T104")
+            client._aes_key = None
+
+        except Exception:
+            # Network error — can't check; fall through to T104
+            client._aes_key = None
+
+    # ── Step 1: call T104 to get fresh passowrdDes ────────────────────────
     try:
         private_key_pem = client.key_manager.get_private_key()
     except Exception as e:
@@ -347,13 +396,19 @@ def get_symmetric_key() -> dict:
 
     frappe.throw(
         "T104: None of the candidate AES keys could decrypt EFRIS responses.<br><br>"
-        "This means the <b>private key in PrivateKey.txt does not match</b> "
+        "<b>Root cause</b>: The private key in <code>PrivateKey.txt</code> does NOT match "
         "the public key registered with EFRIS.<br><br>"
-        "To fix:<br>"
-        "1. Run <b>T102 (Client Init)</b> to re-download the correct private key<br>"
-        "2. Or generate a new key pair and re-register the public key with EFRIS<br><br>"
+        "<b>How to fix (permanent)</b>:<br>"
+        "1. On the server, generate a new 2048-bit RSA key pair:<br>"
+        "<code style='margin-left:1em'>openssl genrsa -out /home/admin/2026/PrivateKey.pem 2048</code><br>"
+        "<code style='margin-left:1em'>openssl rsa -in /home/admin/2026/PrivateKey.pem -pubout -out /home/admin/2026/PublicKey.pem</code><br>"
+        "2. Upload the new <b>public key</b> to the EFRIS portal (Settings → Device Management)<br>"
+        "3. Copy the private key content into <code>PrivateKey.txt</code><br><br>"
+        "<b>Temporary workaround</b>: If the system was working before, the session key "
+        "in <code>SessionAESKey.txt</code> may still be valid. Avoid clicking "
+        "<b>Full Initialise</b> — instead use <b>Fetch URA Exchange Rates</b> directly.<br><br>"
         "See <b>Error Log → EFRIS T104 All Candidates Failed</b> for raw bytes.",
-        title="T104 AES Key Verification Failed",
+        title="T104: Private Key Mismatch",
     )
 
 
@@ -725,12 +780,12 @@ def full_initialise() -> dict:
     frappe.publish_progress(10, title="EFRIS Init", description="T101 — Testing connection…")
     results["server_time"] = get_server_time()
 
-    # T103 FIRST — sign in / get device info (may reset the EFRIS session)
+    # T103 — sign in / get device info
     frappe.publish_progress(40, title="EFRIS Init", description="T103 — Sign in…")
     results["t103"] = sign_in()
 
-    # T104 LAST — get fresh session AES key after T103 has settled the session
-    frappe.publish_progress(75, title="EFRIS Init", description="T104 — Getting session key…")
+    # T104 — verify session key (skips T104 call if existing key still works)
+    frappe.publish_progress(75, title="EFRIS Init", description="T104 — Verifying session key…")
     results["t104"] = get_symmetric_key()
 
     frappe.publish_progress(100, title="EFRIS Init", description="Done ✅")
