@@ -27,25 +27,47 @@ def generate_data_exchange_id() -> str:
 def make_global_info(interface_code: str, settings) -> dict:
     """
     Build the globalInfo section of every EFRIS request.
-    `settings` is an EFRIS Settings document (per-company).
+
+    Field order and names mirror the SAP B1 GlobalInfo class exactly:
+        public string AppID          → appId
+        public string BRN            → brn
+        public string DataExchangeId → dataExchangeId
+        public string DeviceMAC      → deviceMAC
+        public string DeviceNo       → deviceNo
+        public ExtendField ExtendField → extendField
+        public string Longitude      → longitude
+        public string Latitude       → latitude
+        public string InterfaceCode  → interfaceCode
+        public string RequestCode    → requestCode
+        public string RequestTime    → requestTime
+        public string ResponseCode   → responseCode
+        public string TaxpayerID     → taxpayerID
+        public string TIN            → tin
+        public string UserName       → userName
+        public string Version        → version
+
+    Note: agentType is NOT in the SAP B1 GlobalInfo class and has been removed.
     """
     return {
         "appId":          settings.app_id or "AP04",
-        "version":        settings.api_version or "1.1.20191201",
+        "brn":            settings.branch_id or "",
         "dataExchangeId": generate_data_exchange_id(),
+        "deviceMAC":      "FFFFFFFFFFFF",
+        "deviceNo":       settings.device_no or "",
+        "extendField":    {
+            "responseDateFormat":     "dd/MM/yyyy",
+            "responseTimeFormat":     "dd/MM/yyyy HH:mm:ss",
+        },
+        "longitude":      "0",
+        "latitude":       "0",
         "interfaceCode":  interface_code,
         "requestCode":    "TP",
         "requestTime":    now_str(),
         "responseCode":   "TA",
+        "taxpayerID":     settings.taxpayer_id or "",
+        "tin":            settings.tin or "",
         "userName":       settings.efris_username or "admin",
-        "deviceMAC":      "FFFFFFFFFFFF",
-        "deviceNo":       settings.device_no,
-        "tin":            settings.tin,
-        "brn":            settings.branch_id or "",
-        "taxpayerID":     settings.taxpayer_id,
-        "longitude":      "0",
-        "latitude":       "0",
-        "agentType":      "0",
+        "version":        settings.api_version or "1.1.20191201",
     }
 
 
