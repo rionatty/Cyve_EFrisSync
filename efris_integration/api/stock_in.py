@@ -1,26 +1,35 @@
 """
-T131 — Goods Stock Maintain (Stock In / Inventory Adjustment)
+T131 — Goods Stock Maintain (Stock In)
 
-Submits a Stock Entry's items as a stock-in record directly to EFRIS.
-This is the dedicated inventory-management interface — NOT the same as T114
-(Goods Receipt linked to a purchase/invoice flow).
+Mirrors SAP B1: GoodsReceipt.cs → StockIn section / T131 handler.
 
-Payload structure (T131 spec, pages 172-175):
+Payload (EFRIS spec pages 172-175):
   {
-    "goodsStockIn":     { header fields },
-    "goodsStockInItem": [ { per-item fields }, ... ]
+    "goodsStockIn": {
+      "operationType":    "101",          Y  101=Increase / 102=Reduction
+      "stockInType":      "102",          N  101=Import 102=Local 103=Manufacture 104=Opening
+      "supplierTin":      "...",          N  empty if operationType=102 or stockInType=103
+      "supplierName":     "...",          N  required if operationType=101 and not Manufacture
+      "adjustType":       "",             N  required only if operationType=102
+      "remarks":          "...",          N  required if operationType=102 and adjustType=104
+      "stockInDate":      "yyyy-MM-dd",   N
+      "productionBatchNo":"",             N  empty unless stockInType=103
+      "productionDate":   "",             N  empty unless stockInType=103  (yyyy-MM-dd)
+      "branchId":         "...",          N  from EFRIS Settings
+      "invoiceNo":        "...",          N  max 20 chars
+      "isCheckBatchNo":   "0",            N  default 0
+      "rollBackIfError":  "0",            N  default 0
+      "goodsTypeCode":    "101"           N  101=Goods 102=Fuel
+    },
+    "goodsStockInItem": [{
+      "commodityGoodsId": "...",          N  URA internal ID from Item.efris_reference_no
+      "goodsCode":        "...",          N  ERPNext item_code (cannot both be empty)
+      "measureUnit":      "PP",           N  T115 rateUnit code
+      "quantity":         "10",           Y  string, decimal allowed
+      "unitPrice":        "5000",         Y  string, can be "0"
+      "remarks":          ""              N
+    }]
   }
-
-stockInType mapping (from efris_stock_in_type label field):
-  "Import"                 → "101"
-  "Local Purchase"         → "102"
-  "Manufacture/Assembling" → "103"
-  "Opening Stock"          → "104"
-
-Business rules from spec:
-  - If stockInType = 103 (Manufacture): supplierTin + supplierName must be empty
-  - supplierName is required when operationType = 101 (stock-in) and not Manufacture
-  - commodityGoodsId and goodsCode cannot BOTH be empty (we always send goodsCode)
 """
 
 import frappe
@@ -32,7 +41,7 @@ from efris_integration.api.session import (
     refresh_session,
     handle_session_error,
 )
-from efris_integration.utils.helpers import log_efris
+from efris_integration.utils.helpers import get_efris_settings, log_efris
 
 # ─── stockInType label → EFRIS code ──────────────────────────────────────────
 
@@ -49,14 +58,15 @@ STOCK_IN_TYPE_MAP: dict[str, str] = {
 @frappe.whitelist()
 def upload_stock_in(stock_entry_name: str, company: str) -> dict:
     """
-    Submit a Stock Entry to EFRIS as a T131 Goods Stock Maintain record.
+    Submit a Stock Entry to EFRIS as a T131 Goods Stock Maintain (Stock In) record.
 
-    Reads the URA tab fields (efris_stock_in_type, efris_supplier_name,
-    efris_supplier_tin, efris_reference_no) set by the user before submitting.
+    Reads the URA tab fields the user has filled on the submitted Stock Entry:
+      efris_stock_in_type  — Stock In Type (Import / Local Purchase / …)
+      efris_supplier_name  — Supplier Name
+      efris_supplier_tin   — Supplier TIN  (hidden; populated via dialog if used)
+      efris_reference_no   — Reference No  (sent as invoiceNo to URA)
 
-    On success:
-      - efris_ura_remark ← URA response message
-      - efris_reference_no ← kept as-is (user's input invoice ref sent to URA)
+    On success writes URA's response back into efris_ura_remark.
     """
     if not stock_entry_name:
         frappe.throw("Stock Entry name is required.")
@@ -66,8 +76,25 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
     doc = frappe.get_doc("Stock Entry", stock_entry_name)
     if doc.docstatus != 1:
         frappe.throw(
-            "Stock Entry must be submitted (docstatus=1) before uploading to EFRIS.",
+            "Stock Entry must be submitted before uploading to EFRIS.",
             title="Not Submitted",
+        )
+
+    # ── Validate required URA fields ──────────────────────────────────────────
+    stock_in_label = (doc.get("efris_stock_in_type") or "").strip()
+    if not stock_in_label:
+        frappe.throw(
+            "Please set <b>Stock In Type</b> on the URA tab before uploading.",
+            title="Stock In Type Required",
+        )
+
+    supplier_name = (doc.get("efris_supplier_name") or "").strip()
+    stock_in_code = STOCK_IN_TYPE_MAP.get(stock_in_label, "102")
+    if stock_in_code != "103" and not supplier_name:
+        frappe.throw(
+            "Please set <b>Supplier Name</b> on the URA tab.<br>"
+            "(Supplier Name is optional only for Manufacture/Assembling.)",
+            title="Supplier Name Required",
         )
 
     payload = _build_t131_payload(doc, company)
@@ -92,7 +119,7 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
                 title="EFRIS T131 Error",
             )
 
-        # Session stale — refresh via T104 and retry once (same pattern as goods.py)
+        # Session stale — refresh via T104 and retry once
         frappe.logger("efris").info(
             f"T131 [{exc.code}] {stock_entry_name} [{company}] — session stale, refreshing."
         )
@@ -111,7 +138,7 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
         except EFRISAPIError as exc2:
             handle_session_error("T131", company, exc2, "Stock Entry", stock_entry_name)
 
-    # ── Success: write URA response back to Stock Entry ───────────────────────
+    # ── Success: write URA response remark back to Stock Entry ────────────────
     ura_remark = _extract_remark(result)
 
     frappe.db.set_value(
@@ -138,8 +165,8 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
 
 def _call_t131(client: EFRISClient, payload: dict, doc_name: str) -> dict:
     """
-    T131 spec: payload is a plain DICT (not wrapped in a list like T130).
-    Encrypted, not signed (mirrors T114/T115 pattern in stock.py).
+    T131 spec: payload is a plain dict (not a list like T130).
+    Encrypted; no RSA signing required (mirrors T114/T115 in stock.py).
     """
     return client.call(
         "T131",
@@ -155,68 +182,88 @@ def _call_t131(client: EFRISClient, payload: dict, doc_name: str) -> dict:
 
 def _build_t131_payload(doc, company: str) -> dict:
     """
-    Build the T131 JSON payload from the Stock Entry document.
+    Build the complete T131 payload per EFRIS spec pages 172-175.
 
-    goodsStockIn header:
-      operationType  = "101" (always stock-in from this path)
-      stockInType    = code derived from efris_stock_in_type label
-      invoiceNo      = efris_reference_no or doc.name (max 20 chars)
-      stockInDate    = posting_date
-      supplierTin    = efris_supplier_tin  (omitted for Manufacture)
-      supplierName   = efris_supplier_name (omitted for Manufacture)
-
-    goodsStockInItem per line:
-      commodityGoodsId = Item.efris_reference_no  (URA internal ID, if set)
-      goodsCode        = item_code  (always sent — cannot both be empty)
-      measureUnit      = T115 rateUnit code
-      quantity         = qty
-      unitPrice        = basic_rate (purchase price)
+    SAP B1 field mapping:
+      OIGN.U_StockInType   → goodsStockIn.stockInType
+      OIGN.U_SupplierName  → goodsStockIn.supplierName
+      OIGN.U_SupplierTIN   → goodsStockIn.supplierTin
+      OIGN.DocNum          → goodsStockIn.invoiceNo
+      OIGN.DocDate         → goodsStockIn.stockInDate
+      Settings.BranchId    → goodsStockIn.branchId
+      IGN1.ItemCode        → goodsStockInItem.goodsCode
+      IGN1.U_GoodsId       → goodsStockInItem.commodityGoodsId
+      IGN1.UomCode         → goodsStockInItem.measureUnit
+      IGN1.Quantity        → goodsStockInItem.quantity
+      IGN1.Price           → goodsStockInItem.unitPrice
     """
+    settings = get_efris_settings(company)
+
     stock_in_label = (doc.get("efris_stock_in_type") or "").strip()
     stock_in_code  = STOCK_IN_TYPE_MAP.get(stock_in_label, "102")
 
     supplier_name  = (doc.get("efris_supplier_name") or "").strip()
     supplier_tin   = (doc.get("efris_supplier_tin")  or "").strip()
     reference_no   = (doc.get("efris_reference_no")  or doc.name or "").strip()
-    posting_date   = str(doc.posting_date or "")
+    branch_id      = (settings.branch_id             or "").strip()
+    posting_date   = str(doc.posting_date            or "")   # already yyyy-MM-dd
 
-    # ── Header ────────────────────────────────────────────────────────────────
+    # ── goodsStockIn header ───────────────────────────────────────────────────
     header: dict = {
-        "operationType":  "101",
-        "stockInType":    stock_in_code,
-        "invoiceNo":      reference_no[:20],
-        "stockInDate":    posting_date,
-        "isCheckBatchNo": "0",
-        "rollBackIfError":"0",
-        "goodsTypeCode":  "101",
+        "operationType":   "101",           # always stock-in (increase) from this path
+        "stockInType":     stock_in_code,   # 101-104
+        "stockInDate":     posting_date,
+        "invoiceNo":       reference_no[:20],
+        "isCheckBatchNo":  "0",
+        "rollBackIfError": "0",
+        "goodsTypeCode":   "101",           # 101=Goods (default)
     }
 
-    # supplierName / supplierTin must be empty for Manufacture (code 103)
+    # branchId from EFRIS Settings (optional but always sent if configured)
+    if branch_id:
+        header["branchId"] = branch_id
+
+    # supplierName / supplierTin: required for stock-in except Manufacture (103)
+    # Per spec: "If stockInType=103, supplierTin must be empty"
     if stock_in_code != "103":
         if supplier_name:
             header["supplierName"] = supplier_name[:100]
         if supplier_tin:
             header["supplierTin"] = supplier_tin[:50]
 
-    # ── Items ─────────────────────────────────────────────────────────────────
+    # productionBatchNo / productionDate: only for Manufacture/Assembling (103)
+    # Per spec: "If stockInType != 103, productionBatchNo must be empty"
+    if stock_in_code == "103":
+        # Stock Entry doesn't have a production batch field by default;
+        # use the Stock Entry name as a fallback batch reference.
+        header["productionBatchNo"] = (doc.name or "")[:50]
+        header["productionDate"]    = posting_date
+
+    # ── goodsStockInItem lines ────────────────────────────────────────────────
     items = []
     for row in (doc.items or []):
         if not row.item_code:
             continue
 
-        # Load URA internal goods ID from the Item master
-        goods_id = frappe.db.get_value("Item", row.item_code, "efris_reference_no") or ""
-        goods_id = str(goods_id).strip()
+        # URA internal goods ID from Item master (efris_reference_no)
+        goods_id = str(
+            frappe.db.get_value("Item", row.item_code, "efris_reference_no") or ""
+        ).strip()
 
-        uom_code = _uom_code(row.uom or row.stock_uom or "", company)
+        uom_code  = _uom_code(row.uom or row.stock_uom or "", company)
+        qty       = str(float(row.qty          or 0))
+        unit_price = str(float(row.basic_rate  or row.valuation_rate or 0))
 
         line: dict = {
             "goodsCode":   str(row.item_code),
             "measureUnit": uom_code,
-            "quantity":    str(float(row.qty or 0)),
-            "unitPrice":   str(float(row.basic_rate or row.valuation_rate or 0)),
+            "quantity":    qty,
+            "unitPrice":   unit_price,
             "remarks":     "",
         }
+
+        # commodityGoodsId: optional — include when the item has been
+        # registered on EFRIS (T130) and has a URA internal ID
         if goods_id:
             line["commodityGoodsId"] = goods_id
 
@@ -237,10 +284,7 @@ def _build_t131_payload(doc, company: str) -> dict:
 # ─── UOM helper ───────────────────────────────────────────────────────────────
 
 def _uom_code(erpnext_uom: str, company: str) -> str:
-    """
-    Map ERPNext UOM → EFRIS T115 rateUnit code (max 3 chars).
-    Lookup order: EFRIS UOM Mapping table → built-in dict → fallback "PP".
-    """
+    """Map ERPNext UOM → EFRIS T115 rateUnit code (max 3 chars)."""
     if not erpnext_uom:
         return "PP"
 
@@ -287,21 +331,28 @@ def _uom_code(erpnext_uom: str, company: str) -> str:
 
 def _extract_remark(result) -> str:
     """
-    T131 response is a list of per-item objects.
-    Collect any non-empty returnMessage entries into one summary string.
-    If all items succeeded (returnMessage empty), returns "".
+    T131 response: list of per-item objects each with returnCode / returnMessage.
+    Returns a summary string of all non-empty messages.
+    Empty string = all items succeeded with no message.
     """
     msgs = []
-    items = result if isinstance(result, list) else [result] if isinstance(result, dict) else []
+    items = (
+        result if isinstance(result, list)
+        else [result] if isinstance(result, dict)
+        else []
+    )
     for item in items:
         if not isinstance(item, dict):
             continue
-        rc  = str(item.get("returnCode")    or "").strip()
-        rm  = str(item.get("returnMessage") or "").strip()
-        gc  = str(item.get("goodsCode")     or "").strip()
+        rc = str(item.get("returnCode")    or "").strip()
+        rm = str(item.get("returnMessage") or "").strip()
+        gc = str(item.get("goodsCode")     or "").strip()
         if rm:
             label = f"{gc}: " if gc else ""
-            msgs.append(f"{label}{rm}" if rc == "00" or not rc else f"{label}[{rc}] {rm}")
+            msgs.append(
+                f"{label}{rm}" if (not rc or rc == "00")
+                else f"{label}[{rc}] {rm}"
+            )
     return " | ".join(msgs)
 
 

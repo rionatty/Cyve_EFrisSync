@@ -30,11 +30,11 @@ frappe.ui.form.on("Stock Entry", {
 
         const t = frm.doc.stock_entry_type;
 
-        // ── T131 — Goods Stock Maintain (inventory management) ───────────────
-        // Available on every submitted Stock Entry so the user can register or
-        // adjust EFRIS inventory independently of the sales/purchase invoice flow.
-        frm.add_custom_button(__("Submit Stock In (T131)"), () => {
-            efris_t131_dialog(frm);
+        // ── T131 — Goods Stock Maintain (Upload to EFRIS) ────────────────────
+        // Reads Stock In Type, Supplier Name, Reference No directly from the
+        // URA tab (fields are allow_on_submit so editable on submitted docs).
+        frm.add_custom_button(__("Upload to EFRIS (T131 – Stock In)"), () => {
+            efris_upload_stock_in(frm);
         }, __("EFRIS"));
 
         // ── T114 types ───────────────────────────────────────────────────────
@@ -108,72 +108,57 @@ frappe.ui.form.on("Stock Entry", {
 // ─── Dialogs ──────────────────────────────────────────────────────────────
 
 /**
- * T131 — Goods Stock Maintain dialog.
+ * T131 — Upload to EFRIS (Goods Stock Maintain).
  *
- * Collects the four URA tab fields, saves them to the Stock Entry, then calls
- * efris_integration.api.stock_in.upload_stock_in.
+ * Reads Stock In Type, Supplier Name, Reference No directly from the URA tab
+ * (all three have allow_on_submit=1 so they're editable on a submitted doc).
+ * Validates required fields client-side before calling the server.
  *
- * On success URA writes the response back into the Remark field on the form.
+ * SAP B1 equivalent: GoodsReceipt → Upload to EFRIS button.
  */
-function efris_t131_dialog(frm) {
-    const d = new frappe.ui.Dialog({
-        title: __("EFRIS Stock In — T131 (Goods Stock Maintain)"),
-        fields: [
-            {
-                label: __("Stock In Type"),
-                fieldname: "efris_stock_in_type",
-                fieldtype: "Select",
-                options: [
-                    { value: "Import",                 label: __("Import") },
-                    { value: "Local Purchase",          label: __("Local Purchase") },
-                    { value: "Manufacture/Assembling",  label: __("Manufacture/Assembling") },
-                    { value: "Opening Stock",           label: __("Opening Stock") },
-                ],
-                default: frm.doc.efris_stock_in_type || "Local Purchase",
-                reqd: 1,
-            },
-            {
-                label: __("Supplier Name"),
-                fieldname: "efris_supplier_name",
-                fieldtype: "Data",
-                default: frm.doc.efris_supplier_name || "",
-                description: __("Required unless Stock In Type is Manufacture/Assembling"),
-            },
-            {
-                label: __("Supplier TIN (EFRIS)"),
-                fieldname: "efris_supplier_tin",
-                fieldtype: "Data",
-                default: frm.doc.efris_supplier_tin || "",
-            },
-            {
-                label: __("Reference No"),
-                fieldname: "efris_reference_no",
-                fieldtype: "Data",
-                default: frm.doc.efris_reference_no || frm.doc.name,
-                description: __("Invoice / PO number sent to URA (max 20 chars)"),
-            },
-        ],
-        primary_action_label: __("Submit to EFRIS (T131)"),
-        primary_action(values) {
-            d.hide();
-            // Save fields to the Stock Entry first, then call the API
-            frappe.db.set_value("Stock Entry", frm.doc.name, {
-                efris_stock_in_type:  values.efris_stock_in_type,
-                efris_supplier_name:  values.efris_supplier_name,
-                efris_supplier_tin:   values.efris_supplier_tin,
-                efris_reference_no:   values.efris_reference_no,
-            }).then(() => {
-                efris_call(frm,
-                    "efris_integration.api.stock_in.upload_stock_in",
-                    {
-                        stock_entry_name: frm.doc.name,
-                        company:          frm.doc.company,
-                    }
-                );
-            });
-        },
-    });
-    d.show();
+function efris_upload_stock_in(frm) {
+    const stockInType   = (frm.doc.efris_stock_in_type  || "").trim();
+    const supplierName  = (frm.doc.efris_supplier_name  || "").trim();
+    const referenceNo   = (frm.doc.efris_reference_no   || "").trim();
+
+    // ── Client-side validation ────────────────────────────────────────────────
+    if (!stockInType) {
+        frappe.msgprint({
+            title:   __("Stock In Type Required"),
+            message: __("Please set <b>Stock In Type</b> on the URA tab before uploading."),
+            indicator: "orange",
+        });
+        return;
+    }
+
+    const isMfg = stockInType === "Manufacture/Assembling";
+    if (!isMfg && !supplierName) {
+        frappe.msgprint({
+            title:   __("Supplier Name Required"),
+            message: __("Please set <b>Supplier Name</b> on the URA tab.<br>"
+                      + "(Only optional for Manufacture/Assembling.)"),
+            indicator: "orange",
+        });
+        return;
+    }
+
+    // ── Confirm and submit ────────────────────────────────────────────────────
+    const typeLabel = stockInType || "—";
+    const supLabel  = supplierName || "(none)";
+    const refLabel  = referenceNo  || frm.doc.name;
+
+    frappe.confirm(
+        __(`Upload <b>${frm.doc.name}</b> to URA EFRIS as Goods Stock Maintain (T131)?<br><br>
+            <b>Stock In Type:</b> ${typeLabel}<br>
+            <b>Supplier Name:</b> ${supLabel}<br>
+            <b>Reference No:</b>  ${refLabel}`),
+        () => {
+            efris_call(frm,
+                "efris_integration.api.stock_in.upload_stock_in",
+                { stock_entry_name: frm.doc.name, company: frm.doc.company }
+            );
+        }
+    );
 }
 
 

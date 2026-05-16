@@ -87,12 +87,16 @@ CUSTOM_FIELDS = {
          "insert_after": "remarks",            "module": "EFRIS Integration"},
 
         # ── Left column ───────────────────────────────────────────────────────
+        # allow_on_submit=1 so the user can set these on a submitted Stock Entry
+        # before clicking "Upload to EFRIS".
         {"fieldname": "efris_stock_in_type",  "fieldtype": "Select",        "label": "Stock In Type",
          "insert_after": "efris_section",
          "options": "\nImport\nLocal Purchase\nManufacture/Assembling\nOpening Stock",
+         "allow_on_submit": 1,
          "module": "EFRIS Integration"},
         {"fieldname": "efris_supplier_name",  "fieldtype": "Data",          "label": "Supplier Name",
-         "insert_after": "efris_stock_in_type"},
+         "insert_after": "efris_stock_in_type",
+         "allow_on_submit": 1},
 
         # ── Column Break ──────────────────────────────────────────────────────
         {"fieldname": "efris_col_break",      "fieldtype": "Column Break",
@@ -100,7 +104,8 @@ CUSTOM_FIELDS = {
 
         # ── Right column ──────────────────────────────────────────────────────
         {"fieldname": "efris_reference_no",   "fieldtype": "Data",          "label": "Reference No",
-         "insert_after": "efris_col_break"},
+         "insert_after": "efris_col_break",
+         "allow_on_submit": 1},
         {"fieldname": "efris_ura_remark",     "fieldtype": "Small Text",    "label": "Remark",
          "insert_after": "efris_reference_no",
          "read_only": 1,
@@ -109,7 +114,7 @@ CUSTOM_FIELDS = {
 
         # ── Hidden — kept for T114 / T115 / T119 backward compat ─────────────
         {"fieldname": "efris_supplier_tin",               "fieldtype": "Data",     "label": "Supplier TIN (EFRIS)",
-         "insert_after": "efris_ura_remark",               "hidden": 1},
+         "insert_after": "efris_ura_remark",               "hidden": 1, "allow_on_submit": 1},
         {"fieldname": "efris_invoice_id",                 "fieldtype": "Data",     "label": "EFRIS Invoice ID",
          "insert_after": "efris_supplier_tin",             "hidden": 1, "read_only": 1},
         {"fieldname": "efris_status",                     "fieldtype": "Select",   "label": "EFRIS Status",
