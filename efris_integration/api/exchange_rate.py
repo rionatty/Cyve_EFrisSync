@@ -79,10 +79,8 @@ def sync_exchange_rates(
             rate_list = _fetch_rates_for_date(client, company, query_ts, date_str)
         except EFRISAPIError as exc:
             # Non-00 returnCode for this date — log and continue (matches SAP B1)
-            frappe.log_error(
-                f"T126 [{exc.code}] {exc.message} for queryDate={query_ts} company={company}",
-                "EFRIS Exchange Rate Skip",
-            )
+            short_msg = f"T126 [{exc.code}] for {date_str} [{company}]: {exc.message}"[:500]
+            frappe.log_error(title="EFRIS Exchange Rate Skip", message=short_msg)
             frappe.logger("efris").warning(
                 f"T126 skip {date_str} [{company}]: [{exc.code}] {exc.message}"
             )
@@ -90,9 +88,10 @@ def sync_exchange_rates(
             current += timedelta(days=1)
             continue
         except Exception as exc:
-            frappe.log_error(
-                f"T126 unexpected error for queryDate={query_ts} company={company}: {exc}",
-                "EFRIS Exchange Rate Error",
+            short_msg = f"T126 error for {date_str} [{company}]: {str(exc)[:400]}"
+            frappe.log_error(title="EFRIS Exchange Rate Error", message=short_msg)
+            frappe.logger("efris").error(
+                f"T126 error {date_str} [{company}]: {exc}"
             )
             failed_dates.append(date_str)
             current += timedelta(days=1)
@@ -220,18 +219,36 @@ def _fetch_rates_for_date(
     Encrypted: AES-128-ECB with session AES key  (encryptCode=2, zipCode=0)
     Signed:    RSA SHA1 PKCS1v1.5 of base64(encrypted content)
 
-    Auto-refreshes the session once on SESSION_EXPIRED and retries.
+    EFRIS error codes that mean "session expired / wrong AES key":
+      15 = Data decryption error  (EFRIS can't decrypt our request — our key is stale)
+      16 = Signature verification error
+      99 = General session error
+    On these codes, refresh the session once and retry.
     """
     try:
         result = _call_t126_for_date(client, query_ts, date_label)
     except EFRISAPIError as exc:
         if exc.code not in ("SESSION_EXPIRED", "15", "16", "99"):
             raise   # real EFRIS error — let caller handle
+
         # Session expired → refresh and retry once
         frappe.logger("efris").info(
-            f"T126 [{exc.code}] for {date_label} [{company}] — refreshing session and retrying."
+            f"T126 [{exc.code}] '{exc.message}' for {date_label} [{company}] "
+            "— session stale, attempting T104 refresh."
         )
-        _refresh_session(client, company)
+        try:
+            _refresh_session(client, company)
+        except Exception as refresh_exc:
+            # T104 failed (private key wrong/empty). Convert to a clean,
+            # short EFRISAPIError so the outer loop can log it without
+            # hitting MySQL column length limits.
+            short = str(refresh_exc)[:300]
+            raise EFRISAPIError(
+                "SESSION_REFRESH_FAILED",
+                f"T104 session refresh failed — paste Session AES Key in EFRIS Settings. "
+                f"Detail: {short}",
+            ) from refresh_exc
+
         result = _call_t126_for_date(client, query_ts, date_label)   # may raise again
 
     return _extract_rate_list(result)
