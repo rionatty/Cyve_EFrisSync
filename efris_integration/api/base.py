@@ -171,11 +171,14 @@ class EFRISClient:
 
     def _get_aes_key(self) -> bytes:
         """
-        Return the session AES key, auto-initialising if necessary.
+        Return the session AES key.
 
-        SAP B1 never prompts the user to initialise — it just works.
-        If the session key file is missing we silently run T103+T104.
-        If the private key file is also missing we run T102 first.
+        If the Session AES Key field in EFRIS Settings is empty → throw immediately
+        with a clear instruction to paste it. This matches how SAP B1 works:
+        it reads the key directly from SessionAESKey.txt and uses it; no auto-init.
+
+        Auto-init (T103+T104) is only attempted when the field exists but the key
+        appears to be expired (SESSION_EXPIRED from a live call) — not on every boot.
         """
         if self._aes_key is not None:
             return self._aes_key
@@ -183,20 +186,46 @@ class EFRISClient:
         try:
             self._aes_key = self.key_manager.get_aes_key()
             return self._aes_key
+        except RuntimeError as exc:
+            msg = str(exc)
+            # Field is empty — give a direct, actionable error. Do NOT auto-init.
+            # (SAP B1 would also fail here if SessionAESKey.txt were missing.)
+            if "not configured" in msg or "is not configured" in msg:
+                frappe.throw(
+                    f"<b>Session AES Key</b> is not set in EFRIS Settings for "
+                    f"company <b>{self.company}</b>.<br><br>"
+                    "Open <b>EFRIS Settings</b> → <b>Cryptographic Keys</b> and paste the "
+                    "content of <b>SessionAESKey.txt</b> into the <b>Session AES Key</b> field, "
+                    "then save.<br><br>"
+                    f"Your key: <code>x/SVvBh4S49ddPNX+nXQYg==</code>",
+                    title="Session AES Key Not Configured",
+                )
+            # Field has a value but it can't be parsed (wrong format) → same instruction
+            if "cannot parse" in msg or "Cannot parse" in msg:
+                frappe.throw(
+                    f"<b>Session AES Key</b> in EFRIS Settings for <b>{self.company}</b> "
+                    f"is not a valid base64 AES key.<br><br>"
+                    f"It must be exactly 16, 24, or 32 bytes when base64-decoded.<br>"
+                    f"Error: {msg}",
+                    title="Session AES Key Invalid",
+                )
+            # Other runtime error — fall through to auto-init attempt
         except Exception:
-            pass  # key file missing or unreadable — auto-init below
+            pass  # unexpected error — try auto-init as last resort
 
+        # Key exists but seems stale or parse issue — try auto-refresh once
         frappe.logger("efris").info(
-            f"EFRIS [{self.company}]: session AES key not found — auto-initialising (T103+T104)."
+            f"EFRIS [{self.company}]: session AES key issue — attempting T103+T104 refresh."
         )
         try:
             self._auto_init_session()
         except Exception as exc:
             frappe.log_error(frappe.get_traceback(), f"EFRIS Auto-Init Failed [{self.company}]")
             frappe.throw(
-                f"EFRIS session for <b>{self.company}</b> could not be initialised automatically: {exc}<br>"
-                "Check <b>Error Log → EFRIS Auto-Init Failed</b> for details.<br>"
-                "Ensure EFRIS Settings (API URL, TaxpayerID, Private Key, Session AES Key) are correct."
+                f"EFRIS session for <b>{self.company}</b> could not be auto-refreshed: {exc}<br>"
+                "Paste your <b>SessionAESKey.txt</b> content directly into the "
+                "<b>Session AES Key</b> field in EFRIS Settings.",
+                title="EFRIS Session Error",
             )
         self._aes_key = self.key_manager.get_aes_key()
         return self._aes_key

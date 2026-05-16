@@ -262,32 +262,20 @@ def _call_t126_for_date(client: EFRISClient, query_ts: str, date_label: str) -> 
 
 def _ensure_session(client: EFRISClient, company: str):
     """
-    Verify the current session key is usable before starting the rate loop.
-    Mirrors SAP B1's CommonValues.GetUraData() at the start of FetchAndUpdateRatesForRange.
+    Load the session AES key into the client before starting the rate loop.
+
+    Mirrors SAP B1's CommonValues.GetUraData() + direct key read:
+        CommonValues.GetUraData();
+        byte[] aesKey = Convert.FromBase64String(File.ReadAllText(CommonValues.SessionAESKey));
+
+    SAP B1 does NOT make a test T126 call to probe the key — it reads it and uses it.
+    If the key is expired, the first real T126 call fails, and _fetch_rates_for_date
+    handles the SESSION_EXPIRED retry by calling _refresh_session.
+
+    If the key field is empty → _get_aes_key throws immediately with a clear message.
     """
-    existing_key = None
-    try:
-        existing_key = client.key_manager.get_aes_key()
-    except Exception:
-        pass
-
-    if existing_key:
-        client._aes_key = existing_key
-        try:
-            client.call(
-                "T126", payload=None, encrypt=False,
-                doc_type="__session_check__", doc_name="pre-sync",
-            )
-            return   # key is good
-        except EFRISAPIError as exc:
-            if exc.code != "SESSION_EXPIRED":
-                return   # decrypt succeeded; EFRIS returned other code — key is fine
-        except Exception:
-            return   # network issue — proceed optimistically
-        # SESSION_EXPIRED → fall through to refresh
-        client._aes_key = None
-
-    _refresh_session(client, company)
+    # Load key into client — raises clearly if field is empty or invalid
+    client._aes_key = client._get_aes_key()
 
 
 def _refresh_session(client: EFRISClient, company: str):
