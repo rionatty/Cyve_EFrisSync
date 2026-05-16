@@ -128,42 +128,57 @@ def refresh_session(client: EFRISClient, company: str) -> None:
     """
     Fetch a fresh session AES key via T104 and update both DB and global cache.
 
-    Critical: T104 uses its OWN EFRISClient instance internally to save the new key.
-    The caller's client.settings is a DIFFERENT in-memory object — it still holds
-    the OLD session_aes_key.  We must reload from DB after T104, not from the
-    stale in-memory settings, or the retry will encrypt with the old key again.
+    Critical design notes:
+      • T104 uses its OWN EFRISClient — caller's client.settings is stale.
+      • After T104 we must read the key via frappe.db.get_value() which
+        ALWAYS hits the database, bypassing Frappe's request-scoped doc cache.
+        frappe.get_doc() may return a cached object that still holds the old key.
+      • If get_symmetric_key raises (all T104 candidates failed T126 probe →
+        private key mismatch), we raise a clear RuntimeError so the caller can
+        show an actionable message instead of the cryptic original error 15.
     """
     from efris_integration.api.auth import get_symmetric_key
+    from efris_integration.api.key_manager import _parse_aes_key_b64
 
-    # force=True: always call T104, skip the step-0 validity probe
-    get_symmetric_key(company, force=True)
+    # ── Step 1: T104 — fetch and save fresh session key ───────────────────────
+    try:
+        get_symmetric_key(company, force=True)
+    except Exception as t104_exc:
+        # T104 failed — private key likely doesn't match EFRIS registration.
+        # Raise a clear error so the caller shows the right message.
+        raise RuntimeError(
+            f"T104 session refresh failed: {t104_exc}<br><br>"
+            "Go to <b>EFRIS Settings → Full Initialise</b> to re-register, "
+            "or paste the correct <b>Session AES Key</b> directly."
+        ) from t104_exc
 
-    # ── Reload the AES key fresh from DB ──────────────────────────────────────
-    # T104 saved the new key via its own client instance (different object).
-    # client.settings and client._km are now stale — refresh them.
+    # ── Step 2: Read the new key directly from DB (bypasses doc cache) ────────
     client._aes_key = None
-    client._km = None  # force KeyManager rebuild with reloaded settings
+    client._km = None  # discard stale KeyManager
 
     try:
-        # Reload the settings document from DB to get the key T104 just wrote
-        fresh = frappe.get_doc("EFRIS Settings", client.settings.name)
-        client.settings = fresh
-    except Exception:
-        pass  # if reload fails, key_manager may still find it via db_get_value
-
-    try:
-        key = client.key_manager.get_aes_key()
-        client._aes_key = key
-        set_global_aes_key(company, key)
-        frappe.logger("efris").info(
-            f"[{company}] session refreshed via T104 — "
-            f"new AES key loaded ({len(key) * 8}-bit)"
-        )
+        doc_name = client.settings.name
+        key_b64  = frappe.db.get_value(
+            "EFRIS Settings", doc_name, "session_aes_key"
+        ) or ""
+        key = _parse_aes_key_b64(key_b64.strip()) if key_b64 else None
+        if key:
+            client._aes_key = key
+            set_global_aes_key(company, key)
+            frappe.logger("efris").info(
+                f"[{company}] session refreshed via T104 — "
+                f"new AES key: {len(key) * 8}-bit"
+            )
+            return
     except Exception as exc:
         frappe.logger("efris").error(
-            f"[{company}] refresh_session: could not load new key after T104: {exc}"
+            f"[{company}] refresh_session: db read error after T104: {exc}"
         )
-        raise
+
+    raise RuntimeError(
+        f"refresh_session: T104 ran but could not read new AES key "
+        f"from EFRIS Settings for {company}."
+    )
 
 
 def handle_session_error(
