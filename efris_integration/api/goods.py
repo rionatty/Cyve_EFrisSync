@@ -153,15 +153,9 @@ def _call_t130(client: EFRISClient, payload: dict, doc_name: str) -> dict:
 
 def _modify_goods(item, company: str) -> dict:
     """T131 — Modify existing goods on EFRIS. Mirrors ItemMaster.cs → btnUpdate_Click()"""
+    # goodsId (EFRIS internal number) is optional — EFRIS also accepts goodsCode
+    # (the ERPNext item code) as the unique identifier for T131.
     goods_id = (item.get("efris_reference_no") or "").strip()
-    if not goods_id:
-        _log_item("Item", item.name, "T131", {}, {}, "Failed",
-                  "Reference No. (EFRIS Goods ID) is empty — upload with Add first")
-        frappe.throw(
-            "Cannot update: <b>Reference No.</b> (EFRIS Goods ID) is empty.<br>"
-            "Upload the item with <b>Upload Type = Add</b> first.",
-            title="EFRIS Goods ID Missing",
-        )
 
     client  = EFRISClient(company=company)
     payload = _build_goods_payload(item, company, operation="Update", goods_id=goods_id)
@@ -277,7 +271,9 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
         "remarks":            str(item.get("efris_item_remark") or ""),
     }
 
-    if operation == "Update":
+    if operation == "Update" and goods_id:
+        # Include EFRIS internal goodsId only when available.
+        # If empty, EFRIS identifies the item by goodsCode (ERPNext item code).
         payload["goodsId"] = goods_id
 
     return payload
