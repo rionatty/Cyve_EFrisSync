@@ -236,7 +236,9 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
     have_piece = yn(item.get("efris_have_piece_unit"))
     have_excise = yn(item.get("efris_have_excise_tax"))
 
-    piece_uom = str(item.get("efris_piece_uom") or "")
+    # pieceMeasureUnit also goes through the same UOM mapper (max 3 chars enforced)
+    piece_uom_raw = str(item.get("efris_piece_uom") or "")
+    piece_uom = _get_efris_uom(piece_uom_raw, company) if piece_uom_raw else ""
 
     payload = {
         "operationType":      "101" if operation == "Add" else "102",
@@ -270,7 +272,10 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
 # ─── UOM mapping ──────────────────────────────────────────────────────────────
 
 def _get_efris_uom(erpnext_uom: str, company: str) -> str:
-    """Map ERPNext UOM → EFRIS URA UOM code. Falls back to 'PP' (Piece)."""
+    """
+    Map ERPNext UOM → EFRIS URA UOM code (max 3 chars per EFRIS spec).
+    Falls back to 'PP' (Piece) if not mapped or if the mapped value is > 3 chars.
+    """
     if not erpnext_uom:
         return "PP"
 
@@ -280,7 +285,14 @@ def _get_efris_uom(erpnext_uom: str, company: str) -> str:
         "EFRIS UOM Mapping", {"company": company, "uom_name": erpnext_uom}, "ura_uom"
     )
     if ura_uom:
-        return str(ura_uom).strip()
+        code = str(ura_uom).strip()
+        if len(code) <= 3:
+            return code
+        # Mapped value is too long — log and fall through to built-in map
+        frappe.logger("efris").warning(
+            f"EFRIS UOM Mapping '{erpnext_uom}' → '{code}' is {len(code)} chars "
+            f"(max 3). Check EFRIS UOM Mapping for company '{company}'."
+        )
 
     return {
         "Nos": "PP", "No": "PP", "Pcs": "PP", "Pieces": "PP", "Unit": "PP", "Units": "PP",
