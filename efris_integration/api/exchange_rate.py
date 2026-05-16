@@ -31,6 +31,7 @@ from efris_integration.api.session import (
     refresh_session,
     throw_session_key_error,
 )
+from efris_integration.utils.helpers import log_efris
 
 
 @frappe.whitelist()
@@ -331,10 +332,12 @@ def _fetch_rates_for_date(
         try:
             refresh_session(client, company)
         except Exception as refresh_exc:
-            # T104 failed (private key wrong/empty). Convert to a clean,
-            # short EFRISAPIError so the outer loop can log it without
-            # hitting MySQL column length limits.
             short = str(refresh_exc)[:300]
+            log_efris(
+                "Currency Exchange", date_label, "T126",
+                {}, {}, "Failed",
+                f"Session refresh failed: {short}",
+            )
             raise EFRISAPIError(
                 "SESSION_REFRESH_FAILED",
                 f"T104 session refresh failed — paste Session AES Key in EFRIS Settings. "
