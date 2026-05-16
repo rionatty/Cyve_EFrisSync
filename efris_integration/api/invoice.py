@@ -127,7 +127,13 @@ def _seller_details(settings, doc) -> dict:
 
 
 def _buyer_details(doc, buyer: dict) -> dict:
-    buyer_type = buyer.get("efris_buyer_type") or "B2C"
+    # efris_business_type is the new EFRIS-tab field (B2F/B2G/B2B/B2C).
+    # Fall back to legacy efris_buyer_type if the new field is not set.
+    buyer_type = (
+        buyer.get("efris_business_type")
+        or buyer.get("efris_buyer_type")
+        or "B2C"
+    )
     return {
         "buyerTin":         safe_str(buyer.get("tax_id")),
         "buyerNinBrn":      safe_str(buyer.get("efris_nin_brn")),

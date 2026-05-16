@@ -293,14 +293,49 @@ CUSTOM_FIELDS = {
         },
     ],
 
-    # ─── Customer ────────────────────────────────────────────────────────
+    # ─── Customer ─────────────────────────────────────────────────────────
+    # EFRIS tab — mirrors SAP B1 Business Partner → EFRIS tab:
+    #   Export | Business Type | Invoice Name | Import | Deemed VAT
+    # Old fields kept hidden so invoice.py (_buyer_details) still works.
     "Customer": [
-        {"fieldname": "efris_section", "fieldtype": "Section Break", "label": "EFRIS / URA", "insert_after": "tax_id", "collapsible": 1, "module": "EFRIS Integration"},
-        {"fieldname": "efris_buyer_type", "fieldtype": "Select", "label": "Buyer Type", "options": "B2C\nB2B\nB2F\nB2G", "default": "B2C"},
-        {"fieldname": "efris_nin_brn", "fieldtype": "Data", "label": "NIN / BRN"},
-        {"fieldname": "efris_citizenship", "fieldtype": "Data", "label": "Citizenship"},
-        {"fieldname": "efris_sector", "fieldtype": "Data", "label": "Business Sector"},
-        {"fieldname": "efris_export_flag", "fieldtype": "Check", "label": "Export Customer"},
+        # ── Tab Break ─────────────────────────────────────────────────────
+        {"fieldname": "efris_tab",          "fieldtype": "Tab Break", "label": "EFRIS",
+         "insert_after": "tax_id",          "module": "EFRIS Integration"},
+
+        # ── Visible fields (SAP B1 EFRIS tab layout) ──────────────────────
+        {"fieldname": "efris_export",       "fieldtype": "Select",    "label": "Export",
+         "insert_after": "efris_tab",
+         "options": "\nY - Yes\nN - No",    "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_business_type","fieldtype": "Select",    "label": "Business Type",
+         "insert_after": "efris_export",
+         "options": "\nB2F\nB2G\nB2B\nB2C"},
+
+        {"fieldname": "efris_invoice_name", "fieldtype": "Data",      "label": "Invoice Name",
+         "insert_after": "efris_business_type"},
+
+        {"fieldname": "efris_import",       "fieldtype": "Select",    "label": "Import",
+         "insert_after": "efris_invoice_name",
+         "options": "\nY - Yes\nN - No",    "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_deemed_vat",   "fieldtype": "Select",    "label": "Deemed VAT",
+         "insert_after": "efris_import",
+         "options": "\nY - Yes\nN - No",    "module": "EFRIS Integration"},
+
+        # ── Hidden — backward compat with invoice.py _buyer_details() ─────
+        {"fieldname": "efris_section",      "fieldtype": "Section Break", "label": "EFRIS (Legacy)",
+         "insert_after": "efris_deemed_vat","hidden": 1},
+        {"fieldname": "efris_buyer_type",   "fieldtype": "Select",    "label": "Buyer Type",
+         "insert_after": "efris_section",
+         "options": "\nB2C\nB2B\nB2F\nB2G","default": "B2C", "hidden": 1},
+        {"fieldname": "efris_nin_brn",      "fieldtype": "Data",      "label": "NIN / BRN",
+         "insert_after": "efris_buyer_type","hidden": 1},
+        {"fieldname": "efris_citizenship",  "fieldtype": "Data",      "label": "Citizenship",
+         "insert_after": "efris_nin_brn",   "hidden": 1},
+        {"fieldname": "efris_sector",       "fieldtype": "Data",      "label": "Business Sector",
+         "insert_after": "efris_citizenship","hidden": 1},
+        {"fieldname": "efris_export_flag",  "fieldtype": "Check",     "label": "Export Customer",
+         "insert_after": "efris_sector",    "hidden": 1},
     ],
 
     # ─── Supplier ────────────────────────────────────────────────────────
