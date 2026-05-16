@@ -34,7 +34,37 @@ class KeyManager:
     # ─── Client RSA Private Key  (U_OT_PK → PrivateKey.txt) ─────────────
 
     def get_private_key(self) -> str:
-        return self._read_key_file("private_key_path", "Private Key")
+        """
+        Read the private key file exactly as SAP B1 does:
+            byte[] privateKey = Convert.FromBase64String(File.ReadAllText(path))
+            CngKey.Import(privateKey, CngKeyBlobFormat.Pkcs8PrivateBlob)
+
+        The file contains base64 text; the decoded bytes are PKCS#8 DER.
+        _import_rsa_key() handles both plain-text PEM and base64-encoded DER,
+        so we just return the raw file content — no conversion needed here.
+
+        Also tolerates:
+          • PEM files (-----BEGIN ... KEY-----)
+          • Raw base64 PKCS#8 with no headers  ← SAP B1 format
+          • Raw binary DER (read as bytes → base64-encode for _import_rsa_key)
+        """
+        path = self.s.get("private_key_path")
+        if not path:
+            raise RuntimeError("Private Key path is not configured in EFRIS Settings.")
+        if not __import__("os").path.isfile(path):
+            raise RuntimeError(f"Private Key file not found: {path}")
+
+        # Read raw bytes first — handles both text (PEM/base64) and binary (DER)
+        raw_bytes = _read_bytes(path)
+
+        # Try UTF-8 decode: covers PEM and base64-without-headers (SAP B1 format)
+        try:
+            return raw_bytes.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            pass
+
+        # Binary DER — base64-encode so _import_rsa_key step 2 can decode it back
+        return base64.b64encode(raw_bytes).decode("ascii")
 
     def save_private_key(self, pem: str):
         self._write_key_file("private_key_path", pem)

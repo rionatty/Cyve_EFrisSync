@@ -65,22 +65,54 @@ function _add_action_buttons(frm) {
         });
     });
 
-    // ── Fetch URA Exchange Rates (SAP: BtnFetch → FetchAndUpdateExchangeRates → T126) ──
+    // ── Fetch URA Exchange Rates (SAP: ExchangeRateForm → FetchAndUpdateRatesForRange → T126) ──
     frm.add_custom_button(__("Fetch URA Exchange Rates"), () => {
-        frappe.call({
-            method: "efris_integration.api.exchange_rate.sync_exchange_rates",
-            freeze: true,
-            freeze_message: __("Fetching exchange rates from URA (T126)…"),
-            callback(r) {
-                if (!r.exc && r.message) {
-                    frappe.msgprint({
-                        title:   __("Exchange Rates Updated"),
-                        message: `✅ ${r.message.synced} currencies updated for ${r.message.date}.`,
-                        indicator: "green",
-                    });
-                }
+        // Mirrors SAP B1 ExchangeRateForm date-range dialog
+        const today = frappe.datetime.get_today();
+        const d = new frappe.ui.Dialog({
+            title: __("Fetch URA Exchange Rates"),
+            fields: [
+                {
+                    label: __("From Date"),
+                    fieldname: "from_date",
+                    fieldtype: "Date",
+                    default: today,
+                    reqd: 1,
+                },
+                {
+                    label: __("To Date"),
+                    fieldname: "to_date",
+                    fieldtype: "Date",
+                    default: today,
+                    reqd: 1,
+                },
+            ],
+            primary_action_label: __("Fetch Rates"),
+            primary_action(values) {
+                d.hide();
+                frappe.call({
+                    method: "efris_integration.api.exchange_rate.sync_exchange_rates",
+                    args:   { from_date: values.from_date, to_date: values.to_date },
+                    freeze: true,
+                    freeze_message: __("Fetching URA exchange rates (T126)…"),
+                    callback(r) {
+                        if (!r.exc && r.message) {
+                            const m = r.message;
+                            const indicator = (m.failed && m.failed.length) ? "orange" : "green";
+                            frappe.msgprint({
+                                title:     __("Exchange Rates Updated"),
+                                message:   `✅ ${m.days} day(s): ${m.inserted} added, ${m.updated} updated.`
+                                         + (m.failed && m.failed.length
+                                             ? `<br>⚠️ Skipped: ${m.failed.join(", ")}`
+                                             : ""),
+                                indicator,
+                            });
+                        }
+                    }
+                });
             }
         });
+        d.show();
     });
 }
 
