@@ -141,13 +141,24 @@ class EFRISClient:
                 if "block boundary" in err or "aligned" in err or "multiple" in err:
                     return _parse_plain_content(content)
 
-                # Padding error → try plain parse first (response may not be
-                # encrypted despite encryptCode=2), then raise SESSION_EXPIRED.
-                if "padding" in err or "incorrect" in err:
+                # Any decryption failure means wrong AES key or unencrypted content.
+                # Patterns covered:
+                #   "padding" / "incorrect"  — PKCS7 unpad error (wrong key, wrong padding)
+                #   "codec" / "utf" / "decode" — garbage bytes from wrong-key AES decrypt
+                #   "json"                    — decrypted bytes aren't valid JSON
+                #   "unpack"                  — struct unpack failure on garbage
+                # Try plain-text parse first in case EFRIS sent unencrypted despite encryptCode=2,
+                # then raise SESSION_EXPIRED so the T104 probe loop tries the next candidate.
+                _is_decrypt_failure = (
+                    "padding" in err or "incorrect" in err
+                    or "codec" in err or "utf" in err or "decode" in err
+                    or "json" in err or "unpack" in err
+                )
+                if _is_decrypt_failure:
                     plain = _parse_plain_content(content)
                     if plain:
                         return plain
-                    raise EFRISAPIError("SESSION_EXPIRED", "Session AES key is stale.")
+                    raise EFRISAPIError("SESSION_EXPIRED", "Session AES key is stale — wrong key.")
 
                 frappe.throw(f"EFRIS response decryption failed: {exc}")
 
