@@ -25,6 +25,12 @@ from datetime import date, datetime, timedelta
 import frappe
 
 from efris_integration.api.base import EFRISClient, EFRISAPIError
+from efris_integration.api.session import (
+    SESSION_ERRORS,
+    ensure_session,
+    refresh_session,
+    throw_session_key_error,
+)
 
 
 @frappe.whitelist()
@@ -61,7 +67,7 @@ def sync_exchange_rates(
 
     # Ensure we have a valid session key before starting the loop.
     # This mirrors SAP B1's GetUraData() / CommonValues.GetUraData() call at the top.
-    _ensure_session(client, company)
+    ensure_session(client, company)
 
     # Load all ERPNext currencies that exist AND are enabled (Status = Enabled).
     # Only these will receive rates — currencies that are missing or disabled are skipped.
@@ -314,7 +320,7 @@ def _fetch_rates_for_date(
         #            PKCS7 happened to pass but result isn't valid JSON)
         #   "16"   — Signature verification error (session mismatch)
         #   "99"   — General session error
-        if exc.code not in ("SESSION_EXPIRED", "15", "2066", "16", "99"):
+        if exc.code not in SESSION_ERRORS:
             raise   # real EFRIS business error — let caller handle
 
         # Session expired → refresh and retry once
@@ -323,7 +329,7 @@ def _fetch_rates_for_date(
             "— session stale, attempting T104 refresh."
         )
         try:
-            _refresh_session(client, company)
+            refresh_session(client, company)
         except Exception as refresh_exc:
             # T104 failed (private key wrong/empty). Convert to a clean,
             # short EFRISAPIError so the outer loop can log it without
@@ -362,67 +368,9 @@ def _call_t126_for_date(client: EFRISClient, query_ts: str, date_label: str) -> 
     )
 
 
-# ─── Session helpers ───────────────────────────────────────────────────────────
-
-def _ensure_session(client: EFRISClient, company: str):
-    """
-    Load the session AES key before starting the exchange rate sync loop.
-
-    MATCHES SAP B1 ExchangeRateForm.cs exactly:
-        CommonValues.GetUraData();   // just loads config from DB
-        byte[] aesKey = Convert.FromBase64String(File.ReadAllText(CommonValues.SessionAESKey));
-
-    SAP B1 does NOT call T103 or T104 here. It reads the existing session key
-    from file and uses it directly. Calling T103 (sign-in) would reset the EFRIS
-    session AES key on the server, invalidating our stored key immediately.
-
-    If no key is stored (first run), we fall back to _refresh_session (T103→T104)
-    to initialise, but this must not be done on every sync run.
-
-    If T126 fails mid-loop with error 15/16/99/2066, _refresh_session handles
-    the T103→T104 recovery at that point.
-    """
-    # Just load the existing stored key — no T103, no T104 proactively.
-    try:
-        client._aes_key = client.key_manager.get_aes_key()
-        frappe.logger("efris").info(
-            f"[{company}] session key loaded from DB: {len(client._aes_key)*8}-bit"
-        )
-        return
-    except RuntimeError:
-        pass   # no key stored → need to initialise
-
-    # No session key stored at all → try T104 only to get one (first-run only).
-    # Do NOT call T103 first — that would reset the EFRIS session and invalidate
-    # any key currently held by SAP B1. T104 alone is sufficient to retrieve the
-    # active session key if the session is still live on the server.
-    frappe.logger("efris").info(
-        f"[{company}] no session key stored — running T104 to initialise"
-    )
-    _refresh_session(client, company)
-    client._aes_key = None
-    client._aes_key = client.key_manager.get_aes_key()
-
-
-def _refresh_session(client: EFRISClient, company: str):
-    """
-    Mid-loop session refresh: T104 ONLY (forced, bypassing step-0 probe).
-
-    Called when T126 returns a session-expired code (15/16/99/2066).
-
-    CRITICAL: Do NOT call T103 (sign_in) here.
-    T103 resets the EFRIS session AES key on the server. If T104 then fails
-    (e.g. because the Private Key in EFRIS Settings doesn't match the RSA key
-    registered with URA), we end up with NO valid key — and SAP B1's stored
-    SessionAESKey.txt is also now invalidated. By skipping T103, we avoid
-    making things worse; if the session is still active on EFRIS's side,
-    T104 alone can retrieve the current key without disturbing SAP B1.
-    """
-    from efris_integration.api.auth import get_symmetric_key
-
-    # force=True: skip step-0 probe, always call T104
-    get_symmetric_key(company, force=True)
-    client._aes_key = None          # force reload from DB on next call
+# ─── Session helpers — delegated to efris_integration.api.session ─────────────
+# ensure_session() and refresh_session() are imported at the top of this file.
+# This module calls them directly; no local wrappers needed.
 
 
 # ─── Response parsing ─────────────────────────────────────────────────────────

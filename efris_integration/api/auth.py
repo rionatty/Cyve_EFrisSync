@@ -31,6 +31,7 @@ from datetime import datetime
 import frappe
 
 from efris_integration.api.base import EFRISClient, EFRISAPIError
+from efris_integration.api.session import WRONG_KEY_CODES
 from efris_integration.utils.encryption import (
     rsa_decrypt,
     try_decrypt_private_key,
@@ -407,8 +408,7 @@ def get_symmetric_key(company: str, force: bool = False) -> dict:
             #                    parse failed because the decrypted bytes aren't valid JSON).
             #                    This is a wrong-key indicator, just a different failure mode.
             #   "9999"/"9998"  — Generic decrypt/format errors in some EFRIS environments
-            _WRONG_KEY_CODES = {"SESSION_EXPIRED", "15", "2066", "9999", "9998"}
-            if exc.code in _WRONG_KEY_CODES:
+            if exc.code in WRONG_KEY_CODES:
                 frappe.logger("efris").warning(
                     f"T104 candidate [{label}] [{exc.code}] '{exc.message[:80]}' "
                     "— wrong key (decrypted to garbage), trying next"
