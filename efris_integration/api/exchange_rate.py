@@ -328,30 +328,19 @@ def _ensure_session(client: EFRISClient, company: str):
     # ── Step 3: T104 failed — fall back to existing stored key ───────────
     # This handles the case where the private key is wrong/missing but the
     # user manually pasted a still-valid session key into the DB field.
+    # No popup here — the sync result message will tell the user if dates fail.
     try:
         client._aes_key = client.key_manager.get_aes_key()
         frappe.logger("efris").info(
-            f"[{company}] Using existing stored session key "
-            f"({len(client._aes_key)*8}-bit) — T104 auto-refresh unavailable."
-        )
-        frappe.msgprint(
-            f"⚠️ T104 session refresh failed for <b>{company}</b>. "
-            "Using existing stored Session AES Key — this may expire without a valid Private Key.<br>"
-            "Paste the correct <b>PrivateKey.txt</b> content into EFRIS Settings to enable "
-            "automatic daily session refresh.",
-            indicator="orange",
-            alert=True,
+            f"[{company}] T104 failed — using existing stored session key "
+            f"({len(client._aes_key)*8}-bit). Key may be stale."
         )
     except Exception as key_exc:
         # No key at all — cannot proceed
-        frappe.throw(
-            f"<b>EFRIS session could not be established for {company}</b>.<br><br>"
-            "T104 failed <b>and</b> no stored Session AES Key is available.<br><br>"
-            "<b>Immediate fix</b>: Paste your current <b>SessionAESKey.txt</b> content "
-            "into the <b>Session AES Key</b> field in EFRIS Settings and save.<br><br>"
-            "<b>Permanent fix</b>: Paste the correct <b>PrivateKey.txt</b> into "
-            "the <b>Private Key</b> field — T104 will then auto-refresh the session key daily.",
-            title="EFRIS Session Not Available",
+        raise frappe.ValidationError(
+            f"EFRIS session unavailable for {company}: T104 failed and no Session AES Key "
+            "is stored. Paste SessionAESKey.txt content into the Session AES Key field in "
+            "EFRIS Settings, then try again."
         )
 
 
