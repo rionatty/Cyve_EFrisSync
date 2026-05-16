@@ -105,30 +105,11 @@ def refresh_session(client: EFRISClient, company: str) -> None:
 
 def throw_session_key_error(t_code: str, company: str, orig_code: str, orig_msg: str) -> None:
     """
-    Raise an actionable frappe error when a session error persists after refresh.
-
-    Gives the user the exact 5-step procedure to paste the key from SAP B1.
-
-    Args:
-        t_code:    EFRIS interface code, e.g. "T130" (shown in the error title).
-        company:   Company name (shown in the error body).
-        orig_code: The EFRIS returnCode that triggered this (e.g. "15").
-        orig_msg:  The EFRIS returnMessage.
+    Raise a short, clear error when a session error persists after T104 refresh.
     """
     frappe.throw(
-        f"<b>EFRIS {t_code} — Session AES Key mismatch "
-        f"[error {orig_code}]</b><br><br>"
-        f"EFRIS returned: <i>{orig_msg}</i><br><br>"
-        "EFRIS cannot decrypt the request because the <b>Session AES Key</b> in "
-        f"EFRIS Settings for <b>{company}</b> does not match the active key on "
-        "the EFRIS server.<br><br>"
-        "<b>How to fix (5 steps):</b><br>"
-        "1. On the SAP B1 server open <b>SessionAESKey.txt</b>.<br>"
-        "2. Copy the base64 key value (e.g. <code>x/SVvBh4S49ddPNX+nXQYg==</code>).<br>"
-        "3. In ERPNext open <b>EFRIS Settings → Session AES Key</b>, "
-        "paste the value and <b>Save</b>.<br>"
-        "4. <b>Do NOT</b> click Full Initialise or T103 Sign-In — "
-        "that resets the EFRIS session and invalidates the key you just pasted.<br>"
-        "5. Try the operation again.",
-        title="Session AES Key Mismatch",
+        f"EFRIS {t_code} failed [<b>{orig_code}</b>]: {orig_msg}<br><br>"
+        f"Please update the <b>Session AES Key</b> in "
+        f"<b>EFRIS Settings</b> for <b>{company}</b> and try again.",
+        title=f"EFRIS {t_code} Error",
     )

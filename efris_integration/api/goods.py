@@ -95,9 +95,8 @@ def _register_goods(item, company: str) -> dict:
                       f"Session refresh failed: {ref_exc}")
             frappe.throw(
                 f"Session refresh failed: {ref_exc}<br><br>"
-                "Paste <b>SessionAESKey.txt</b> content into "
-                "<b>EFRIS Settings → Session AES Key</b> and retry.",
-                title="Session Refresh Failed",
+                "Please update <b>Session AES Key</b> in <b>EFRIS Settings</b> and retry.",
+                title="EFRIS Session Error",
             )
 
         try:
@@ -126,9 +125,13 @@ def _register_goods(item, company: str) -> dict:
 
 
 def _call_t130(client: EFRISClient, payload: dict, doc_name: str) -> dict:
+    # T130 goods registration: AES-encrypted but NOT RSA-signed.
+    # T126 (exchange rate) requires signing per the C# source.
+    # T130/T131 do NOT — adding sign=True causes error 15 (data decryption error)
+    # because EFRIS rejects the extra signature field on goods T-codes.
     return client.call(
         "T130", payload=payload,
-        encrypt=True, sign=True,
+        encrypt=True, sign=False,
         doc_type="Item", doc_name=doc_name,
     )
 
@@ -182,9 +185,8 @@ def _modify_goods(item, company: str) -> dict:
                       f"Session refresh failed: {ref_exc}")
             frappe.throw(
                 f"Session refresh failed: {ref_exc}<br><br>"
-                "Paste <b>SessionAESKey.txt</b> content into "
-                "<b>EFRIS Settings → Session AES Key</b> and retry.",
-                title="Session Refresh Failed",
+                "Please update <b>Session AES Key</b> in <b>EFRIS Settings</b> and retry.",
+                title="EFRIS Session Error",
             )
 
         try:
@@ -202,9 +204,10 @@ def _modify_goods(item, company: str) -> dict:
 
 
 def _call_t131(client: EFRISClient, payload: dict, doc_name: str) -> dict:
+    # T131 modify goods: AES-encrypted, not RSA-signed (same as T130).
     return client.call(
         "T131", payload=payload,
-        encrypt=True, sign=True,
+        encrypt=True, sign=False,
         doc_type="Item", doc_name=doc_name,
     )
 
