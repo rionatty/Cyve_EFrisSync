@@ -205,11 +205,40 @@ def _modify_goods(item, company: str) -> dict:
         except EFRISAPIError as exc2:
             handle_session_error("T130", company, exc2, "Item", item.name)
 
+    # ── Success: extract URA internal goods ID from response ──────────────
+    goods_id_new = ""
+    if isinstance(result, list) and result:
+        first = result[0] if isinstance(result[0], dict) else {}
+        goods_id_new = str(
+            first.get("goodsId") or first.get("GoodsId")
+            or first.get("commodityGoodsId") or first.get("id") or ""
+        ).strip()
+    elif isinstance(result, dict):
+        goods_id_new = str(
+            result.get("goodsId") or result.get("GoodsId")
+            or result.get("commodityGoodsId") or result.get("id") or ""
+        ).strip()
+
+    # ── Write back to Item ─────────────────────────────────────────────────
+    success_remark = "Good WOA! Item Updated Successfully on URA EFRIS."
+    updates = {
+        "efris_item_remark": success_remark,
+    }
+    if goods_id_new:
+        updates["efris_reference_no"] = goods_id_new
+
+    for field, val in updates.items():
+        frappe.db.set_value("Item", item.name, field, val, update_modified=False)
+    frappe.db.commit()
+
     _log_item("Item", item.name, "T130", payload, result, "Success")
 
-    msg = f"Item <b>{item.item_code}</b> updated on EFRIS successfully."
+    msg = f"Good WOA! Item <b>{item.item_code}</b> Updated Successfully on URA EFRIS."
+    if goods_id_new:
+        msg += f"<br>URA Reference No.: <b>{goods_id_new}</b>"
+
     frappe.msgprint(msg, title="EFRIS T130 — Goods Updated", indicator="green")
-    return {"status": "ok", "message": msg}
+    return {"status": "ok", "goods_id": goods_id_new, "message": msg}
 
 
 # ─── EFRIS Log helper ─────────────────────────────────────────────────────────
