@@ -63,6 +63,17 @@ def sync_exchange_rates(
     # This mirrors SAP B1's GetUraData() / CommonValues.GetUraData() call at the top.
     _ensure_session(client, company)
 
+    # Load all ERPNext currencies that exist AND are enabled (Status = Enabled).
+    # Only these will receive rates — currencies that are missing or disabled are skipped.
+    # Never auto-create currencies; the user controls what's in the Currency list.
+    erpnext_currencies: set[str] = set(
+        frappe.get_all("Currency", filters={"enabled": 1}, pluck="name")
+    )
+    erpnext_currencies.discard("UGX")  # UGX is always the target currency; never fetch its own rate
+    frappe.logger("efris").info(
+        f"[{company}] T126: will save rates only for ERPNext currencies: {sorted(erpnext_currencies)}"
+    )
+
     total_inserted = 0
     total_updated  = 0
     # Each entry: (date_str, error_code) so we can show reasons in the result
@@ -139,6 +150,13 @@ def sync_exchange_rates(
             if not currency or rate_val is None:
                 continue
             if currency in ("UGX", ""):
+                continue
+
+            # Skip currencies not configured in ERPNext — do NOT auto-create.
+            if currency not in erpnext_currencies:
+                frappe.logger("efris").info(
+                    f"T126 [{company}] {date_str}: skipping {currency} — not in ERPNext Currency list"
+                )
                 continue
 
             try:
@@ -460,6 +478,17 @@ def _upsert_rate(currency: str, rate: float, date_str: str) -> bool:
         SELECT COUNT(*) FROM ORTT WHERE Currency=? AND RateDate=?
         → UPDATE if exists, INSERT if not
     """
+    # Guard: only save rates for currencies that exist AND are enabled in ERPNext.
+    # The main loop already filters by erpnext_currencies (enabled=1), but this
+    # protects against any direct calls to _upsert_rate that bypass that check.
+    currency_enabled = frappe.db.get_value("Currency", currency, "enabled")
+    if not currency_enabled:
+        frappe.logger("efris").info(
+            f"_upsert_rate: skipping {currency} for {date_str} — "
+            f"{'Currency disabled in ERPNext' if currency_enabled == 0 else 'Currency not in ERPNext'}"
+        )
+        return False
+
     existing = frappe.db.get_value(
         "Currency Exchange",
         {"from_currency": currency, "to_currency": "UGX", "date": date_str},
@@ -468,17 +497,6 @@ def _upsert_rate(currency: str, rate: float, date_str: str) -> bool:
     if existing:
         frappe.db.set_value("Currency Exchange", existing, "exchange_rate", rate)
         return False  # updated
-
-    # Ensure the currency exists in ERPNext
-    if not frappe.db.exists("Currency", currency):
-        try:
-            frappe.get_doc({
-                "doctype":       "Currency",
-                "currency_name": currency,
-                "enabled":       1,
-            }).insert(ignore_permissions=True)
-        except Exception:
-            pass   # might already exist due to race; non-fatal
 
     frappe.get_doc({
         "doctype":       "Currency Exchange",
