@@ -229,7 +229,14 @@ def _extract_aes_key(value: str, private_key_pem: str) -> bytes:
     from efris_integration.utils.encryption import _import_rsa_key
     from Crypto.Cipher import PKCS1_v1_5, PKCS1_OAEP as _OAEP
 
-    raw = _b64.b64decode(value + "==")
+    # Strip any extra whitespace and re-pad; passowrdDes may already have '=='
+    value_clean = value.strip().rstrip("=")
+    raw = _b64.b64decode(value_clean + "==")
+
+    frappe.logger("efris").info(
+        f"_extract_aes_key: passowrdDes decoded to {len(raw)} bytes  "
+        f"preview(hex): {raw[:16].hex()}"
+    )
 
     if not private_key_pem:
         frappe.log_error(
@@ -253,23 +260,52 @@ def _extract_aes_key(value: str, private_key_pem: str) -> bytes:
     # ── 1. RSA-PKCS1v1.5  (official URA — SHA1withRSA / PKCS1v1.5) ───────
     try:
         key      = _import_rsa_key(private_key_pem)
+        frappe.logger("efris").info(
+            f"T104 PKCS1v1.5: key imported OK  "
+            f"modulus_bits={key.n.bit_length()}  "
+            f"modulus_tail={hex(key.n)[-16:]}"
+        )
         sentinel = object()
         result   = PKCS1_v1_5.new(key).decrypt(raw, sentinel)
-        if result is not sentinel and len(result) in (16, 24, 32):
-            frappe.logger("efris").info("T104: AES key via RSA-PKCS1v1.5 ✓")
-            return result
-    except Exception:
-        pass
+        if result is sentinel:
+            frappe.logger("efris").warning(
+                "T104 PKCS1v1.5: decrypt returned sentinel — "
+                "private key does not match EFRIS-registered public key, "
+                "or EFRIS used different padding."
+            )
+        else:
+            frappe.logger("efris").info(
+                f"T104 PKCS1v1.5: decrypt OK  "
+                f"plaintext_len={len(result)}  "
+                f"plaintext_hex={result.hex()}"
+            )
+            if len(result) in (16, 24, 32):
+                frappe.logger("efris").info("T104: AES key via RSA-PKCS1v1.5 ✓")
+                return result
+            else:
+                frappe.logger("efris").warning(
+                    f"T104 PKCS1v1.5: unexpected plaintext length {len(result)} "
+                    f"(expected 16/24/32) — not an AES key, trying OAEP."
+                )
+    except Exception as exc:
+        frappe.logger("efris").warning(f"T104 PKCS1v1.5: exception — {exc}")
 
     # ── 2. RSA-OAEP (fallback) ────────────────────────────────────────────
     try:
         key    = _import_rsa_key(private_key_pem)
         result = _OAEP.new(key).decrypt(raw)
+        frappe.logger("efris").info(
+            f"T104 OAEP: decrypt OK  plaintext_len={len(result)}  "
+            f"plaintext_hex={result.hex()}"
+        )
         if len(result) in (16, 24, 32):
             frappe.logger("efris").info("T104: AES key via RSA-OAEP ✓")
             return result
-    except Exception:
-        pass
+        frappe.logger("efris").warning(
+            f"T104 OAEP: unexpected plaintext length {len(result)}"
+        )
+    except Exception as exc:
+        frappe.logger("efris").warning(f"T104 OAEP: exception — {exc}")
 
     # ── 3. Plain base64 (test/dev environments) ───────────────────────────
     if len(raw) in (16, 24, 32):
@@ -316,11 +352,18 @@ def _extract_aes_key(value: str, private_key_pem: str) -> bytes:
 @frappe.whitelist()
 def diagnose_keys() -> dict:
     """
-    Read the key files and T104 raw values to help debug session issues.
-    Accessible from the browser console: frappe.call('efris_integration.api.auth.diagnose_keys')
+    Full server-side diagnostic: tests RSA key import, decrypts T104 passowrdDes,
+    and verifies the resulting AES key against the session file.
+
+    Run from browser console:
+        frappe.call('efris_integration.api.auth.diagnose_keys').then(r => console.log(r.message))
+    Or from bench:
+        bench execute efris_integration.api.auth.diagnose_keys
     """
     import base64 as _b64
     import os
+    from efris_integration.utils.encryption import _import_rsa_key
+    from Crypto.Cipher import PKCS1_v1_5, PKCS1_OAEP as _OAEP
 
     client   = EFRISClient()
     settings = client.settings
@@ -328,48 +371,116 @@ def diagnose_keys() -> dict:
 
     report = {}
 
-    # ── Private key ───────────────────────────────────────────────────────
+    # ── 1. Private key file ───────────────────────────────────────────────
     priv_path = settings.get("private_key_path") or ""
-    report["private_key_path"] = priv_path
+    report["private_key_path"]   = priv_path
     report["private_key_exists"] = os.path.isfile(priv_path) if priv_path else False
+
+    private_key_pem = ""
     if report["private_key_exists"]:
         try:
-            pem = km.get_private_key()
-            report["private_key_length"] = len(pem)
-            report["private_key_preview"] = pem[:40]
-            from efris_integration.utils.encryption import _import_rsa_key
-            key = _import_rsa_key(pem)
-            report["private_key_rsa_bits"] = key.n.bit_length()
-        except Exception as e:
-            report["private_key_error"] = str(e)
+            private_key_pem = km.get_private_key()
+            report["private_key_length"]  = len(private_key_pem)
+            report["private_key_preview"] = private_key_pem[:60]
+            rsa_key = _import_rsa_key(private_key_pem)
+            report["private_key_rsa_bits"]    = rsa_key.n.bit_length()
+            report["private_key_modulus_tail"] = hex(rsa_key.n)[-24:]   # last 24 hex chars
+            report["private_key_import"]       = "OK"
+        except Exception as exc:
+            report["private_key_error"] = str(exc)
+    else:
+        report["private_key_error"] = "File not found"
 
-    # ── Session AES key ───────────────────────────────────────────────────
+    # ── 2. Session AES key file ───────────────────────────────────────────
     sess_path = settings.get("session_key_path") or ""
-    report["session_key_path"] = sess_path
+    report["session_key_path"]   = sess_path
     report["session_key_exists"] = os.path.isfile(sess_path) if sess_path else False
+
+    existing_aes_hex = ""
     if report["session_key_exists"]:
         try:
             key_bytes = km.get_aes_key()
             report["session_key_bytes"] = len(key_bytes)
-            report["session_key_hex"] = key_bytes.hex()
-        except Exception as e:
-            report["session_key_error"] = str(e)
+            report["session_key_hex"]   = key_bytes.hex()
+            existing_aes_hex            = key_bytes.hex()
+        except Exception as exc:
+            report["session_key_error"] = str(exc)
 
-    # ── Call T104 and show raw passowrdDes ────────────────────────────────
+    # ── 3. Call T104 and do RSA decrypt on server ─────────────────────────
     try:
-        result = client.call("T104", encrypt=False)
-        report["t104_keys"] = list(result.keys())
-        pwd = result.get("passowrdDes", "") or result.get("passwordDes", "")
-        report["passowrdDes_length"] = len(pwd)
-        report["passowrdDes_preview"] = pwd[:60]
-        raw = _b64.b64decode(pwd + "==")
-        report["passowrdDes_decoded_bytes"] = len(raw)
-    except Exception as e:
-        report["t104_error"] = str(e)
+        t104_result = client.call("T104", encrypt=False)
+        report["t104_keys"] = list(t104_result.keys())
 
-    frappe.log_error(str(report), "EFRIS Key Diagnostics")
+        pwd = (t104_result.get("passowrdDes", "")
+               or t104_result.get("passwordDes", "")).strip()
+        report["passowrdDes_length"]        = len(pwd)
+        report["passowrdDes_preview_b64"]   = pwd[:80]
+
+        # Decode the base64 ciphertext (strip existing padding first)
+        pwd_clean = pwd.rstrip("=")
+        raw = _b64.b64decode(pwd_clean + "==")
+        report["passowrdDes_decoded_bytes"] = len(raw)
+        report["passowrdDes_first16_hex"]   = raw[:16].hex()
+
+        # ── 3a. PKCS1v1.5 decrypt ────────────────────────────────────────
+        if private_key_pem:
+            try:
+                rsa_key  = _import_rsa_key(private_key_pem)
+                sentinel = object()
+                v15_result = PKCS1_v1_5.new(rsa_key).decrypt(raw, sentinel)
+                if v15_result is sentinel:
+                    report["pkcs1v15_result"] = "SENTINEL — wrong key or padding; private key does not match EFRIS"
+                else:
+                    report["pkcs1v15_plaintext_len"] = len(v15_result)
+                    report["pkcs1v15_plaintext_hex"] = v15_result.hex()
+                    report["pkcs1v15_result"]        = (
+                        "OK — valid AES key" if len(v15_result) in (16, 24, 32)
+                        else f"UNEXPECTED LENGTH {len(v15_result)} — not a valid AES key size"
+                    )
+            except Exception as exc:
+                report["pkcs1v15_result"] = f"EXCEPTION: {exc}"
+
+            # ── 3b. OAEP decrypt ──────────────────────────────────────────
+            try:
+                rsa_key    = _import_rsa_key(private_key_pem)
+                oaep_result = _OAEP.new(rsa_key).decrypt(raw)
+                report["oaep_plaintext_len"] = len(oaep_result)
+                report["oaep_plaintext_hex"] = oaep_result.hex()
+                report["oaep_result"]        = (
+                    "OK — valid AES key" if len(oaep_result) in (16, 24, 32)
+                    else f"UNEXPECTED LENGTH {len(oaep_result)}"
+                )
+            except Exception as exc:
+                report["oaep_result"] = f"EXCEPTION: {exc}"
+        else:
+            report["pkcs1v15_result"] = "SKIPPED — no private key"
+            report["oaep_result"]     = "SKIPPED — no private key"
+
+        # ── 3c. Compare decrypted key with session file ───────────────────
+        if existing_aes_hex and "pkcs1v15_plaintext_hex" in report:
+            decrypted_hex = report["pkcs1v15_plaintext_hex"]
+            report["session_key_matches_t104"] = (decrypted_hex == existing_aes_hex)
+
+    except Exception as exc:
+        report["t104_error"] = str(exc)
+
+    # ── 4. Log and show ───────────────────────────────────────────────────
+    frappe.log_error(frappe.as_json(report, indent=2), "EFRIS Key Diagnostics")
+
+    # Build a human-readable summary
+    lines = [
+        f"Private key: {report.get('private_key_import','❌')} ({report.get('private_key_rsa_bits','?')} bits)",
+        f"Session key file: {report.get('session_key_bytes','?')} bytes  hex={report.get('session_key_hex','?')}",
+        f"T104 passowrdDes: {report.get('passowrdDes_decoded_bytes','?')} bytes (ciphertext)",
+        f"PKCS1v1.5 decrypt: {report.get('pkcs1v15_result','?')}",
+        f"  → plaintext ({report.get('pkcs1v15_plaintext_len','?')} bytes): {report.get('pkcs1v15_plaintext_hex','—')}",
+        f"OAEP decrypt: {report.get('oaep_result','?')}",
+        f"  → plaintext ({report.get('oaep_plaintext_len','?')} bytes): {report.get('oaep_plaintext_hex','—')}",
+        f"Session key matches T104: {report.get('session_key_matches_t104','N/A')}",
+    ]
+
     frappe.msgprint(
-        f"<pre>{frappe.as_json(report, indent=2)}</pre>",
+        "<pre>" + "\n".join(lines) + "</pre>",
         title="EFRIS Key Diagnostics",
         wide=True,
     )
