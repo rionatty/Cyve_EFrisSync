@@ -18,12 +18,22 @@ EFRIS Yes/No codes (used in haveExciseTax, havePieceUnit):
 The "Upload Type On EFRIS" field on Item drives the choice:
   "Add"    → T130 RegisterGoods
   "Update" → T131 ModifyGoods
+
+Session error codes (same as T126 exchange rate):
+  "15"   = EFRIS PKCS7 unpad failed — our AES key is wrong/stale
+  "2066" = "Illegal json format" — EFRIS decrypted to garbage (wrong key,
+           PKCS7 passed by chance but result isn't valid JSON)
+  "16"   = Signature verification error
+  "99"   = General session error
+On these, we refresh the session (T103 → T104) once and retry.
 """
 
 import frappe
 
 from efris_integration.api.base import EFRISClient, EFRISAPIError
-from efris_integration.utils.helpers import get_efris_settings
+
+# EFRIS error codes that mean our AES session key is wrong or stale
+_SESSION_ERRORS = {"15", "2066", "16", "99", "SESSION_EXPIRED"}
 
 
 # ─── Whitelisted entry point (called from item.js button) ─────────────────────
@@ -68,27 +78,44 @@ def _register_goods(item, company: str) -> dict:
     """
     T130 — Register new goods on EFRIS.
     Mirrors ItemMaster.cs → btnAdd_Click()
+
+    Session handling:
+      Load existing AES key from DB (same as SAP B1 reading SessionAESKey.txt).
+      If EFRIS returns a session-error code (15/2066/16/99), refresh session
+      once (T103 → T104) and retry — identical to exchange_rate.py logic.
     """
-    client  = EFRISClient(company=company)
+    client = EFRISClient(company=company)
+    _ensure_session(client, company)
+
     payload = _build_goods_payload(item, company, operation="Add")
 
     try:
-        result = client.call(
-            "T130",
-            payload=payload,
-            encrypt=True,
-            sign=True,
-            doc_type="Item",
-            doc_name=item.name,
-        )
+        result = _call_t130(client, payload, item.name)
     except EFRISAPIError as exc:
-        frappe.throw(
-            f"EFRIS T130 Register Goods failed [{exc.code}]: {exc.message}",
-            title="EFRIS Upload Failed",
+        if exc.code not in _SESSION_ERRORS:
+            _throw_goods_error("T130", exc)
+
+        # Session stale → refresh once and retry
+        frappe.logger("efris").info(
+            f"T130 [{exc.code}] for item {item.name} [{company}] — "
+            "session stale, refreshing."
         )
+        try:
+            _refresh_session(client, company)
+        except Exception as ref_exc:
+            frappe.throw(
+                f"EFRIS session refresh failed: {ref_exc}<br><br>"
+                "Paste the current <b>SessionAESKey.txt</b> content into "
+                "<b>EFRIS Settings → Session AES Key</b> and try again.",
+                title="Session Refresh Failed",
+            )
+
+        try:
+            result = _call_t130(client, payload, item.name)
+        except EFRISAPIError as exc2:
+            _throw_goods_error("T130", exc2)
 
     # SAP B1 reads back the EFRIS-assigned goodsId after T130 and stores it.
-    # We do the same — store it in efris_reference_no if EFRIS returns one.
     goods_id = (
         result.get("goodsId")
         or result.get("GoodsId")
@@ -101,10 +128,21 @@ def _register_goods(item, company: str) -> dict:
 
     msg = f"Item <b>{item.item_code}</b> registered on EFRIS successfully."
     if goods_id:
-        msg += f" EFRIS Goods ID: <b>{goods_id}</b>"
+        msg += f"<br>EFRIS Goods ID: <b>{goods_id}</b>"
 
     frappe.msgprint(msg, title="EFRIS T130 — Goods Registered", indicator="green")
     return {"status": "ok", "goods_id": goods_id, "message": msg}
+
+
+def _call_t130(client: EFRISClient, payload: dict, doc_name: str) -> dict:
+    return client.call(
+        "T130",
+        payload=payload,
+        encrypt=True,
+        sign=True,
+        doc_type="Item",
+        doc_name=doc_name,
+    )
 
 
 # ─── T131 Modify Goods ────────────────────────────────────────────────────────
@@ -114,8 +152,6 @@ def _modify_goods(item, company: str) -> dict:
     T131 — Modify existing goods on EFRIS.
     Mirrors ItemMaster.cs → btnUpdate_Click()
     """
-    # SAP B1 reads the EFRIS goodsId from the stored UDF before updating.
-    # We read it from efris_reference_no.
     goods_id = (item.get("efris_reference_no") or "").strip()
     if not goods_id:
         frappe.throw(
@@ -125,27 +161,100 @@ def _modify_goods(item, company: str) -> dict:
             title="EFRIS Goods ID Missing",
         )
 
-    client  = EFRISClient(company=company)
+    client = EFRISClient(company=company)
+    _ensure_session(client, company)
+
     payload = _build_goods_payload(item, company, operation="Update", goods_id=goods_id)
 
     try:
-        result = client.call(
-            "T131",
-            payload=payload,
-            encrypt=True,
-            sign=True,
-            doc_type="Item",
-            doc_name=item.name,
-        )
+        result = _call_t131(client, payload, item.name)
     except EFRISAPIError as exc:
-        frappe.throw(
-            f"EFRIS T131 Modify Goods failed [{exc.code}]: {exc.message}",
-            title="EFRIS Update Failed",
+        if exc.code not in _SESSION_ERRORS:
+            _throw_goods_error("T131", exc)
+
+        frappe.logger("efris").info(
+            f"T131 [{exc.code}] for item {item.name} [{company}] — "
+            "session stale, refreshing."
         )
+        try:
+            _refresh_session(client, company)
+        except Exception as ref_exc:
+            frappe.throw(
+                f"EFRIS session refresh failed: {ref_exc}<br><br>"
+                "Paste the current <b>SessionAESKey.txt</b> content into "
+                "<b>EFRIS Settings → Session AES Key</b> and try again.",
+                title="Session Refresh Failed",
+            )
+
+        try:
+            result = _call_t131(client, payload, item.name)
+        except EFRISAPIError as exc2:
+            _throw_goods_error("T131", exc2)
 
     msg = f"Item <b>{item.item_code}</b> updated on EFRIS successfully."
     frappe.msgprint(msg, title="EFRIS T131 — Goods Updated", indicator="green")
     return {"status": "ok", "message": msg}
+
+
+def _call_t131(client: EFRISClient, payload: dict, doc_name: str) -> dict:
+    return client.call(
+        "T131",
+        payload=payload,
+        encrypt=True,
+        sign=True,
+        doc_type="Item",
+        doc_name=doc_name,
+    )
+
+
+# ─── Session helpers (same pattern as exchange_rate.py) ───────────────────────
+
+def _ensure_session(client: EFRISClient, company: str):
+    """
+    Load the existing session AES key from DB before calling T130/T131.
+    Mirrors SAP B1: read SessionAESKey.txt directly, no T103/T104 proactively.
+    Only runs T103→T104 if no key is stored at all (first run).
+    """
+    try:
+        client._aes_key = client.key_manager.get_aes_key()
+        frappe.logger("efris").info(
+            f"[{company}] goods session key loaded: {len(client._aes_key) * 8}-bit"
+        )
+        return
+    except RuntimeError:
+        pass  # no key stored → need to initialise
+
+    frappe.logger("efris").info(
+        f"[{company}] no session key stored — running T103+T104 to initialise"
+    )
+    _refresh_session(client, company)
+    client._aes_key = None
+    client._aes_key = client.key_manager.get_aes_key()
+
+
+def _refresh_session(client: EFRISClient, company: str):
+    """
+    Mid-call session refresh: T103 → T104 (forced, bypassing step-0 probe).
+    Called when T130/T131 returns a session-error code (15/2066/16/99).
+    """
+    from efris_integration.api.auth import sign_in, get_symmetric_key
+
+    try:
+        sign_in(company)
+    except Exception:
+        pass  # T103 non-fatal
+
+    # force=True bypasses the step-0 key probe that races against T103 reset
+    get_symmetric_key(company, force=True)
+    client._aes_key = None  # force reload from DB on next call
+
+
+def _throw_goods_error(t_code: str, exc: EFRISAPIError):
+    """Raise a clean, actionable frappe error for a non-session EFRIS failure."""
+    frappe.throw(
+        f"EFRIS {t_code} failed [<b>{exc.code}</b>]: {exc.message}",
+        title=f"EFRIS {t_code} Error",
+    )
 
 
 # ─── Payload builder ───────────────────────────────────────────────────────────
@@ -155,75 +264,69 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
     Build the T130 / T131 JSON payload from the Item document.
 
     Mirrors ItemMaster.cs field mapping:
-        goodsCode          ← item_code
-        goodsName          ← item_name
-        measureUnit        ← stock_uom  (mapped via EFRIS UOM Mapping)
-        unitPrice          ← efris_unit_price
-        currency           ← "UGX"  (EFRIS always uses UGX)
-        commodityCategoryId← efris_goods_category_id
-        haveExciseTax      ← efris_have_excise_tax  ("Yes"→"101", "No"→"102")
-        description        ← description (plain text, first 200 chars)
-        stockPrewarning    ← efris_stock_prewarning
-        pieceMeasureUnit   ← efris_piece_uom
-        havePieceUnit      ← efris_have_piece_unit  ("Yes"→"101", "No"→"102")
-        pieceUnitPrice     ← efris_piece_unit_price
+        goodsCode           ← item_code
+        goodsName           ← item_name
+        measureUnit         ← stock_uom  (mapped via EFRIS UOM Mapping)
+        unitPrice           ← efris_unit_price
+        currency            ← "UGX"  (EFRIS always uses UGX)
+        commodityCategoryId ← efris_goods_category_id
+        haveExciseTax       ← efris_have_excise_tax  ("Yes"→"101", "No"→"102")
+        description         ← description (plain text, first 200 chars)
+        stockPrewarning     ← efris_stock_prewarning
+        pieceMeasureUnit    ← efris_piece_uom
+        havePieceUnit       ← efris_have_piece_unit  ("Yes"→"101", "No"→"102")
+        pieceUnitPrice      ← efris_piece_unit_price
         exciseDutyCategoryCode ← efris_excise_duty_category
-        exciseUnitPrice    ← efris_excise_rate_usd
-        exciseRatio        ← efris_excise_rate
-        exciseDutyCode     ← efris_excise_duty_category
-        pieceScaledValue   ← efris_piece_scaled_value
-        goodsTypeCode      ← efris_goods_type  (Goods→"101", Services→"102")
-        operationType      ← "101"=Add / "102"=Update  (T131 only)
-        goodsId            ← efris_reference_no  (T131 only)
+        exciseUnitPrice     ← efris_excise_rate_usd
+        exciseRatio         ← efris_excise_rate
+        exciseDutyCode      ← efris_excise_duty_category
+        pieceScaledValue    ← efris_piece_scaled_value
+        goodsTypeCode       ← efris_goods_type  (Goods→"101", Services→"102")
+        operationType       ← "101"=Add / "102"=Update
+        goodsId             ← efris_reference_no  (T131 Update only)
     """
-    # ── UOM ────────────────────────────────────────────────────────────────
     uom_code = _get_efris_uom(item.stock_uom, company)
 
-    # ── Yes/No → EFRIS codes ───────────────────────────────────────────────
     def yn(val):
+        """Convert Yes/No/1/0 to EFRIS 101/102."""
         return "101" if str(val or "").strip().lower() in ("yes", "1", "true") else "102"
 
-    # ── Goods Type → EFRIS code ────────────────────────────────────────────
     goods_type_map = {"Goods": "101", "Services": "102"}
     goods_type_code = goods_type_map.get(
         str(item.get("efris_goods_type") or "Goods").strip(), "101"
     )
 
-    # ── Description — strip HTML tags ─────────────────────────────────────
+    # Strip HTML from description (item.description may contain HTML)
     import re
     raw_desc = item.get("description") or ""
     plain_desc = re.sub(r"<[^>]+>", " ", raw_desc).strip()[:200]
 
     payload = {
-        "goodsCode":          str(item.item_code or ""),
-        "goodsName":          str(item.item_name or item.item_code or ""),
-        "measureUnit":        uom_code,
-        "unitPrice":          float(item.get("efris_unit_price") or 0),
-        "currency":           "UGX",
-        "commodityCategoryId":str(item.get("efris_goods_category_id") or ""),
-        "haveExciseTax":      yn(item.get("efris_have_excise_tax")),
-        "description":        plain_desc,
-        "stockPrewarning":    float(item.get("efris_stock_prewarning") or 0),
-        "pieceMeasureUnit":   str(item.get("efris_piece_uom") or ""),
-        "havePieceUnit":      yn(item.get("efris_have_piece_unit")),
-        "pieceUnitPrice":     float(item.get("efris_piece_unit_price") or 0),
-        "packageScaledValue": 0,
-        "pieceScaledValue":   float(item.get("efris_piece_scaled_value") or 0),
+        "goodsCode":              str(item.item_code or ""),
+        "goodsName":              str(item.item_name or item.item_code or ""),
+        "measureUnit":            uom_code,
+        "unitPrice":              float(item.get("efris_unit_price") or 0),
+        "currency":               "UGX",
+        "commodityCategoryId":    str(item.get("efris_goods_category_id") or ""),
+        "haveExciseTax":          yn(item.get("efris_have_excise_tax")),
+        "description":            plain_desc,
+        "stockPrewarning":        float(item.get("efris_stock_prewarning") or 0),
+        "pieceMeasureUnit":       str(item.get("efris_piece_uom") or ""),
+        "havePieceUnit":          yn(item.get("efris_have_piece_unit")),
+        "pieceUnitPrice":         float(item.get("efris_piece_unit_price") or 0),
+        "packageScaledValue":     0,
+        "pieceScaledValue":       float(item.get("efris_piece_scaled_value") or 0),
         "exciseDutyCategoryCode": str(item.get("efris_excise_duty_category") or ""),
-        "exciseUnitPrice":    float(item.get("efris_excise_rate_usd") or 0),
-        "exciseRatio":        float(item.get("efris_excise_rate") or 0),
-        "exciseDutyCode":     str(item.get("efris_excise_duty_category") or ""),
-        "goodsTypeCode":      goods_type_code,
-        "remarks":            str(item.get("efris_item_remark") or ""),
+        "exciseUnitPrice":        float(item.get("efris_excise_rate_usd") or 0),
+        "exciseRatio":            float(item.get("efris_excise_rate") or 0),
+        "exciseDutyCode":         str(item.get("efris_excise_duty_category") or ""),
+        "goodsTypeCode":          goods_type_code,
+        "remarks":                str(item.get("efris_item_remark") or ""),
+        "operationType":          "101" if operation == "Add" else "102",
     }
 
-    # T131 (Update) needs operation type and the EFRIS goods ID
     if operation == "Update":
-        payload["operationType"] = "102"
-        payload["goodsId"]       = goods_id
-    else:
-        # T130 (Add) — operationType "101" is Add in SAP B1
-        payload["operationType"] = "101"
+        payload["goodsId"] = goods_id
 
     return payload
 
@@ -235,23 +338,14 @@ def _get_efris_uom(erpnext_uom: str, company: str) -> str:
     Map an ERPNext UOM name to the EFRIS / URA UOM code.
 
     Lookup order:
-      1. EFRIS UOM Mapping doctype (company-specific, matched by code or uom_name)
-      2. Fallback: well-known defaults
+      1. EFRIS UOM Mapping doctype (company-specific, by code then by name)
+      2. Built-in fallback table for the most common UOMs
       3. Final fallback: "PP" (Piece — most common EFRIS default)
-
-    EFRIS standard UOM codes (from URA documentation):
-      PP  = Piece / Unit
-      KGM = Kilogram
-      LTR = Litre
-      MTR = Metre
-      BX  = Box
-      DZ  = Dozen
-      BE  = Bundle
     """
     if not erpnext_uom:
         return "PP"
 
-    # 1. EFRIS UOM Mapping table
+    # 1. EFRIS UOM Mapping table (company-specific)
     ura_uom = frappe.db.get_value(
         "EFRIS UOM Mapping",
         {"company": company, "code": erpnext_uom},
@@ -266,7 +360,7 @@ def _get_efris_uom(erpnext_uom: str, company: str) -> str:
     if ura_uom:
         return str(ura_uom).strip()
 
-    # 2. Built-in defaults (covers most common UOMs without requiring a mapping row)
+    # 2. Built-in defaults
     _defaults = {
         "Nos": "PP", "No": "PP", "Pcs": "PP", "Pieces": "PP", "Unit": "PP", "Units": "PP",
         "Kg": "KGM", "Kgs": "KGM", "Kilogram": "KGM", "Kilograms": "KGM",
