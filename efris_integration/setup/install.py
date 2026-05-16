@@ -78,64 +78,56 @@ CUSTOM_FIELDS = {
     ],
 
     # ─── Stock Entry ──────────────────────────────────────────────────────
-    # Tab "URA" groups all EFRIS fields: T131 Stock-In inputs, URA response,
-    # and the T114/T115/T119 status fields.  The old Section Break is replaced
-    # by a Tab Break so users see a clean "URA" tab on the Stock Entry form.
+    # URA tab: 4 visible fields only (mirrors original SAP B1 screenshot).
+    # All other fields are hidden — they still exist in the DB so T114/T115/
+    # T119 can read/write them; they just don't clutter the tab.
     "Stock Entry": [
-        # ── Tab header ────────────────────────────────────────────────────────
+        # ── Tab ───────────────────────────────────────────────────────────────
         {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "URA",
          "insert_after": "remarks", "module": "EFRIS Integration"},
 
-        # ── Left column: T131 Stock-In input fields ───────────────────────────
-        # Stock In Type labels map to T131 stockInType codes:
-        #   Import=101, Local Purchase=102, Manufacture/Assembling=103, Opening Stock=104
+        # ── Left column (visible) ─────────────────────────────────────────────
         {"fieldname": "efris_stock_in_type", "fieldtype": "Select",
          "label": "Stock In Type",
          "options": "\nImport\nLocal Purchase\nManufacture/Assembling\nOpening Stock",
          "module": "EFRIS Integration"},
         {"fieldname": "efris_supplier_name", "fieldtype": "Data",
          "label": "Supplier Name"},
-        {"fieldname": "efris_supplier_tin", "fieldtype": "Data",
-         "label": "Supplier TIN (EFRIS)"},
-        {"fieldname": "efris_reference_no", "fieldtype": "Data",
-         "label": "Reference No"},
 
-        # ── Right column: URA response (read-only) ────────────────────────────
+        # ── Right column (visible) ────────────────────────────────────────────
         {"fieldname": "efris_col_break", "fieldtype": "Column Break"},
 
+        {"fieldname": "efris_reference_no", "fieldtype": "Data",
+         "label": "Reference No"},
         {"fieldname": "efris_ura_remark", "fieldtype": "Small Text",
          "label": "Remark", "read_only": 1,
          "description": "Populated from URA EFRIS response after T131 submission.",
          "module": "EFRIS Integration"},
 
-        # ── T114 / T115 / T119 status fields (shared) ─────────────────────────
+        # ── Hidden — kept for backward compat with T114 / T115 / T119 ─────────
+        {"fieldname": "efris_supplier_tin", "fieldtype": "Data",
+         "label": "Supplier TIN (EFRIS)", "hidden": 1},
         {"fieldname": "efris_invoice_id", "fieldtype": "Data",
-         "label": "EFRIS Invoice ID", "read_only": 1},
+         "label": "EFRIS Invoice ID", "read_only": 1, "hidden": 1},
         {"fieldname": "efris_status", "fieldtype": "Select",
          "label": "EFRIS Status",
-         "options": "\nPending\nSubmitted\nFailed", "read_only": 1},
+         "options": "\nPending\nSubmitted\nFailed", "read_only": 1, "hidden": 1},
         {"fieldname": "efris_submitted_at", "fieldtype": "Datetime",
-         "label": "EFRIS Submitted At", "read_only": 1},
-
-        # ── Legacy numeric code for existing stock.py T114 flow (hidden) ──────
+         "label": "EFRIS Submitted At", "read_only": 1, "hidden": 1},
         {"fieldname": "efris_stock_in_option", "fieldtype": "Select",
          "label": "EFRIS Stock-In Code (Legacy)",
-         "options": "\n101\n102\n103\n104\n105",
-         "description": "101=Import, 102=Local, 103=Manufacture, 104=Opening, 105=Transfer",
-         "hidden": 1},
-
-        # ── Return / inter-branch fields ───────────────────────────────────────
+         "options": "\n101\n102\n103\n104\n105", "hidden": 1},
         {"fieldname": "efris_recipient_name", "fieldtype": "Data",
-         "label": "Recipient Name (EFRIS)"},
+         "label": "Recipient Name (EFRIS)", "hidden": 1},
         {"fieldname": "efris_recipient_tin", "fieldtype": "Data",
-         "label": "Recipient TIN (EFRIS)"},
+         "label": "Recipient TIN (EFRIS)", "hidden": 1},
         {"fieldname": "efris_return_against_invoice_id", "fieldtype": "Data",
-         "label": "Return Against EFRIS Invoice ID"},
+         "label": "Return Against EFRIS Invoice ID", "hidden": 1},
         {"fieldname": "efris_return_reason_code", "fieldtype": "Select",
          "label": "Return Reason Code",
-         "options": "\n101\n102\n103\n104\n105"},
+         "options": "\n101\n102\n103\n104\n105", "hidden": 1},
         {"fieldname": "efris_return_reason", "fieldtype": "Data",
-         "label": "Return Reason"},
+         "label": "Return Reason", "hidden": 1},
     ],
 
     # ─── Stock Reconciliation ─────────────────────────────────────────────
