@@ -109,11 +109,13 @@ def verify_tin(tin: str, company: str) -> dict:
         or taxpayer_obj.get("businessType")
         or ""
     )
+    # URA taxpayerType codes (from EFRIS API spec section 19)
     taxpayer_type = {
         "101": "INDIVIDUAL",
         "201": "COMPANY",
-        "202": "GOVERNMENT",
-        "203": "FOREIGN_NATIONAL",
+        "202": "COMPANY",          # Partnership / other private entity
+        "203": "GOVERNMENT",
+        "204": "FOREIGN_NATIONAL",
     }.get(str(_type_code), str(_type_code))
 
     returned_tin = taxpayer_obj.get("tin") or taxpayer_obj.get("TIN") or tin

@@ -135,22 +135,22 @@ function _show_verified_dialog(frm, queried_tin, d) {
 
     let auto_fill_note = "";
     if (taxpayer_name) {
-        auto_fill_note = !already_has_name
-            ? `<div class="alert alert-info" style="margin-top:8px;font-size:12px">
-                 <b>${__("Auto-fill")}</b>: Invoice Name ← "<i>${frappe.utils.escape_html(taxpayer_name)}</i>"
-                 ${buyer_type ? ` &amp; Business Type ← <b>${buyer_type}</b>` : ""}.
-               </div>`
-            : `<div class="alert alert-warning" style="margin-top:8px;font-size:12px">
-                 ${__("Invoice Name already set — URA name not overwritten.")}
-               </div>`;
+        auto_fill_note = `<div class="alert alert-info" style="margin-top:8px;font-size:12px">
+            <b>${__("Click OK to apply")}</b>:<br>
+            • Customer Name &amp; Invoice Name ← <b>${frappe.utils.escape_html(taxpayer_name)}</b><br>
+            ${buyer_type ? `• Business Type ← <b>${buyer_type}</b>` : ""}
+        </div>`;
     }
 
     const dialog = new frappe.ui.Dialog({
         title:   __("TIN Verified ✓"),
         fields:  [{ fieldtype: "HTML", options: rows + auto_fill_note }],
-        primary_action_label: __("OK"),
+        primary_action_label: __("OK — Apply"),
         primary_action() {
-            if (taxpayer_name && !already_has_name) {
+            if (taxpayer_name) {
+                // Update the actual ERPNext customer name
+                frm.set_value("customer_name",    taxpayer_name);
+                // Update the EFRIS invoice name (used on URA invoices)
                 frm.set_value("efris_invoice_name", taxpayer_name);
             }
             if (buyer_type) {
@@ -158,6 +158,14 @@ function _show_verified_dialog(frm, queried_tin, d) {
                 frm.set_value("efris_buyer_type",    buyer_type);
             }
             dialog.hide();
+
+            // Prompt user to save so the changes are persisted
+            if (taxpayer_name) {
+                frappe.show_alert({
+                    message: __("Customer name updated from URA — please Save."),
+                    indicator: "green",
+                }, 5);
+            }
         },
     });
 
