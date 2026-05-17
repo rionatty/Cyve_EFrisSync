@@ -149,7 +149,8 @@ def get_customer_efris_fields(customer: str) -> dict:
         customer,
         [
             "tax_id",
-            "efris_buyer_type",
+            "efris_business_type",   # new EFRIS tab field (B2F/B2G/B2B/B2C)
+            "efris_buyer_type",      # legacy fallback
             "efris_nin_brn",
             "efris_citizenship",
             "efris_sector",

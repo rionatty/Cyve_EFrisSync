@@ -92,25 +92,69 @@ window.efris_open_log = function (frm) {
 
 // ─── QR code displayer ────────────────────────────────────────────────────
 /**
- * If the form has an efris_qr_code field, render it in a dialog popup.
+ * Show the EFRIS QR code in a dialog.
+ *
+ * efris_qr_code  = base64 PNG data-URI  (generated at submission time)
+ * efris_qr_path  = URA validation URL   (fallback for older invoices)
+ *
+ * If efris_qr_code is a base64 image → render directly.
+ * If only efris_qr_path is available → call server to generate QR on-the-fly.
  */
 window.efris_show_qr = function (frm) {
-    if (!frm.doc.efris_qr_code) {
-        frappe.msgprint(__("No QR code available yet."));
+    const b64_image   = frm.doc.efris_qr_code  || "";
+    const verify_url  = frm.doc.efris_qr_path  || "";
+    const fdn         = frm.doc.efris_fdn_number || frm.doc.name;
+
+    function _render(img_src) {
+        const d = new frappe.ui.Dialog({
+            title: __("EFRIS QR Code – {0}", [fdn]),
+            fields: [{ fieldtype: "HTML", fieldname: "qr_html" }],
+        });
+        let link_html = verify_url
+            ? `<p style="margin-top:10px;">
+                 <a href="${verify_url}" target="_blank"
+                    style="font-size:12px;color:#1a73e8;">
+                    🔗 Verify on URA EFRIS
+                 </a>
+               </p>`
+            : "";
+        d.fields_dict.qr_html.$wrapper.html(
+            `<div style="text-align:center;padding:20px;">
+                <img src="${img_src}"
+                     style="max-width:260px;border:1px solid #eee;padding:8px;" />
+                <p style="font-size:11px;color:#888;margin-top:8px;">
+                    Scan with URA EFRIS app to verify invoice
+                </p>
+                ${link_html}
+             </div>`
+        );
+        d.show();
+    }
+
+    // Case 1: we already have a base64 PNG stored
+    if (b64_image && b64_image.startsWith("data:image/")) {
+        _render(b64_image);
         return;
     }
-    const d = new frappe.ui.Dialog({
-        title: __("EFRIS QR Code – ") + frm.doc.name,
-        fields: [{
-            fieldtype: "HTML",
-            fieldname: "qr_html",
-        }],
+
+    // Case 2: generate QR server-side from the validation URL
+    const encode_target = verify_url || b64_image;
+    if (!encode_target) {
+        frappe.msgprint(__("No QR code data available for this invoice yet."));
+        return;
+    }
+
+    frappe.call({
+        method: "efris_integration.api.invoice.get_qr_code_image",
+        args:   { validation_url: encode_target },
+        freeze: true,
+        freeze_message: __("Generating QR code…"),
+        callback(r) {
+            if (r.message) {
+                _render(r.message);
+            } else {
+                frappe.msgprint(__("Could not generate QR code."));
+            }
+        },
     });
-    d.fields_dict.qr_html.$wrapper.html(
-        `<div style="text-align:center;padding:20px;">
-            <img src="${frm.doc.efris_qr_code}" style="max-width:280px;" />
-            <p style="font-size:11px;color:#888;">Scan with URA EFRIS app</p>
-         </div>`
-    );
-    d.show();
 };

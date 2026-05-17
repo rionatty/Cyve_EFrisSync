@@ -40,8 +40,9 @@ CUSTOM_FIELDS = {
          "description": "URA EFRIS invoice validation URL",
          "module": "EFRIS Integration"},
 
-        {"fieldname": "efris_qr_path",      "fieldtype": "Data",         "label": "QR Path",
+        {"fieldname": "efris_qr_path",      "fieldtype": "Small Text",   "label": "QR Validation URL",
          "insert_after": "efris_qr_code",   "read_only": 1,
+         "description": "URA invoice verification URL — click to open in browser",
          "module": "EFRIS Integration"},
 
         {"fieldname": "efris_antifake_code","fieldtype": "Data",         "label": "Verification Code",

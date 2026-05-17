@@ -59,9 +59,17 @@ frappe.ui.form.on("Sales Invoice", {
         }, __("EFRIS"));
 
         // ── View QR Code ───────────────────────────────────────────────────
-        if (frm.doc.efris_qr_code) {
+        // Show QR if we have a base64 image OR a validation URL to generate from
+        if (frm.doc.efris_qr_code || frm.doc.efris_qr_path) {
             frm.add_custom_button(__("View QR Code"), () => {
                 efris_show_qr(frm);
+            }, __("EFRIS"));
+        }
+
+        // ── Verify on URA ──────────────────────────────────────────────────
+        if (frm.doc.efris_qr_path) {
+            frm.add_custom_button(__("Verify on URA"), () => {
+                window.open(frm.doc.efris_qr_path, "_blank");
             }, __("EFRIS"));
         }
 
@@ -69,20 +77,6 @@ frappe.ui.form.on("Sales Invoice", {
         frm.add_custom_button(__("EFRIS Log"), () => {
             efris_open_log(frm);
         }, __("EFRIS"));
-    },
-
-    // Auto-populate buyer type from customer EFRIS fields
-    customer(frm) {
-        if (!frm.doc.customer) return;
-        frappe.db.get_value(
-            "Customer", frm.doc.customer,
-            ["efris_buyer_type", "efris_nin_brn", "tax_id"],
-            (r) => {
-                if (r && r.efris_buyer_type) {
-                    frm.set_value("efris_buyer_type_display", r.efris_buyer_type);
-                }
-            }
-        );
     },
 });
 

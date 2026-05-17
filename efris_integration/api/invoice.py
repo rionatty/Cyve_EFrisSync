@@ -73,8 +73,13 @@ def submit_sales_invoice(invoice_name: str) -> dict:
                          doc_type="Sales Invoice", doc_name=invoice_name)
 
     _save_result(doc, result)
+
+    # Read from the correct nested path for the success toast
+    _basic = result.get("basicInformation") or {}
+    _inv_id = _basic.get("invoiceId", "") or result.get("invoiceId", "")
     frappe.msgprint(
-        f"✅ Invoice {invoice_name} submitted to EFRIS.\nInvoice ID: {result.get('invoiceId', '')}",
+        f"✅ Invoice {invoice_name} submitted to EFRIS."
+        + (f"\nInvoice ID: {_inv_id}" if _inv_id else ""),
         indicator="green",
     )
     return result
@@ -336,15 +341,26 @@ def _save_result(doc, result: dict):
       response.BasicInformation.InvoiceId    → efris_invoice_id
       response.BasicInformation.AntifakeCode → efris_antifake_code
       response.BasicInformation.invoiceNo    → efris_fdn_number
-      response.Summary.QrCode                → efris_qr_code
-      localPath / qrPath                     → efris_qr_path
+      QR PNG image (generated locally)       → efris_qr_code   (base64 PNG for display)
+      URA validation URL                     → efris_qr_path   (clickable link)
       remark / returnMessage                 → efris_remark
     """
-    # T108 response nests fields under basicInformation and summary sub-objects
-    basic_info = result.get("basicInformation") or {}
-    summary    = result.get("summary") or {}
+    # ── 1. Unwrap list-wrapped responses ─────────────────────────────────────
+    # URA occasionally returns the body as a JSON array.
+    # _parse_plain_content wraps that as {"data": [...]}.
+    # Unwrap it here so the rest of the function always sees a plain dict.
+    if isinstance(result, dict) and not result.get("basicInformation"):
+        data_list = result.get("data")
+        if isinstance(data_list, list) and data_list:
+            first = data_list[0]
+            if isinstance(first, dict):
+                result = first
 
-    invoice_id = basic_info.get("invoiceId", "") or result.get("invoiceId", "")
+    # ── 2. Read nested sub-objects (SAP B1: response.BasicInformation / .Summary) ─
+    basic_info   = result.get("basicInformation") or {}
+    summary_resp = result.get("summary") or {}
+
+    invoice_id = basic_info.get("invoiceId", "")    or result.get("invoiceId", "")
     antifake   = basic_info.get("antifakeCode", "") or result.get("antifakeCode", "")
     fdn_number = (
         basic_info.get("invoiceNo", "")
@@ -354,36 +370,62 @@ def _save_result(doc, result: dict):
     remark = (
         result.get("remark", "")
         or result.get("returnMessage", "")
-        or summary.get("remarks", "")
+        or summary_resp.get("remarks", "")
         or "SUCCESS"
     )
 
-    # Build URA validation URL (shown in QR Code field, same as SAP B1)
-    # T108 returns qrCode inside summary sub-object (UraARInvoice.cs: response.Summary.QrCode)
-    qr_url = summary.get("qrCode", "") or result.get("qrCode", "")
-    if not qr_url and antifake and fdn_number:
-        from efris_integration.utils.helpers import get_efris_settings
+    # ── 3. Build the URA validation URL ──────────────────────────────────────
+    # URA returns qrCode inside summary; use it if present, otherwise construct
+    # the standard verification URL from antifakeCode + invoiceNo (FDN number).
+    # This mirrors how SAP B1 builds the verification link shown to the user.
+    qr_raw = summary_resp.get("qrCode", "") or result.get("qrCode", "")
+
+    validation_url = ""
+    if antifake and fdn_number:
         settings = get_efris_settings(doc.company)
-        base = "https://efristest.ura.go.ug" if settings.get("sandbox") else "https://efris.ura.go.ug"
-        qr_url = (
-            f"{base}/site_new/#/invoiceValidation"
+        sandbox  = bool(getattr(settings, "sandbox", None) or settings.get("sandbox"))
+        efris_host = "https://efristest.ura.go.ug" if sandbox else "https://efris.ura.go.ug"
+        validation_url = (
+            f"{efris_host}/efrisinvoice/#/invoiceValidation"
             f"?invoiceNo={fdn_number}&antiFakeCode={antifake}"
         )
-    elif not qr_url and antifake:
-        qr_url = generate_qr_code_b64(antifake)
+    elif qr_raw:
+        validation_url = qr_raw
+    elif antifake:
+        validation_url = antifake
 
-    # QR Path — local file reference (SAP B1 saves a PNG file)
-    qr_path = (
-        summary.get("qrPath", "")
-        or result.get("qrPath", "")
-        or result.get("localPath", "")
-    )
+    # ── 4. Generate QR code PNG image (base64) ───────────────────────────────
+    # SAP B1 saves a PNG locally via localPath; we store it as a base64 data-URI
+    # so the "View QR Code" button can render it as <img> without any file I/O.
+    # Encode the validation URL — scanning it opens the URA invoice viewer.
+    qr_image_b64 = ""
+    encode_target = validation_url or qr_raw or antifake
+    if encode_target:
+        try:
+            qr_image_b64 = generate_qr_code_b64(encode_target)
+        except Exception as exc:
+            frappe.log_error(str(exc), f"EFRIS QR image generation failed [{doc.name}]")
 
-    doc.db_set("efris_invoice_id",    invoice_id,       update_modified=False)
-    doc.db_set("efris_antifake_code", antifake,         update_modified=False)
-    doc.db_set("efris_fdn_number",    fdn_number,       update_modified=False)
-    doc.db_set("efris_qr_code",       qr_url,           update_modified=False)
-    doc.db_set("efris_qr_path",       qr_path,          update_modified=False)
-    doc.db_set("efris_remark",        remark,            update_modified=False)
-    doc.db_set("efris_status",        "Submitted",       update_modified=False)
-    doc.db_set("efris_submitted_at",  datetime.now(),    update_modified=False)
+    # ── 5. Persist to EFRIS tab fields ───────────────────────────────────────
+    doc.db_set("efris_invoice_id",    invoice_id,    update_modified=False)
+    doc.db_set("efris_antifake_code", antifake,      update_modified=False)
+    doc.db_set("efris_fdn_number",    fdn_number,    update_modified=False)
+    # efris_qr_code  → base64 PNG data-URI  (rendered as <img> in View QR dialog)
+    doc.db_set("efris_qr_code",       qr_image_b64,  update_modified=False)
+    # efris_qr_path  → URA verification URL (clickable link for manual validation)
+    doc.db_set("efris_qr_path",       validation_url, update_modified=False)
+    doc.db_set("efris_remark",        remark,         update_modified=False)
+    doc.db_set("efris_status",        "Submitted",    update_modified=False)
+    doc.db_set("efris_submitted_at",  datetime.now(), update_modified=False)
+
+
+@frappe.whitelist()
+def get_qr_code_image(validation_url: str) -> str:
+    """
+    Generate a QR code PNG and return as a base64 data-URI.
+    Called by the View QR Code button when efris_qr_code is empty
+    (e.g. for invoices submitted before the QR generation fix).
+    """
+    if not validation_url:
+        return ""
+    return generate_qr_code_b64(validation_url)
