@@ -485,9 +485,10 @@ def _build_goods_and_tax(
         # ── Goods item ──────────────────────────────────────────────────────
         goods_cat_id = item_fields.get("efris_goods_category_id") or "238"
 
-        # vatApplicableFlag: "1" = VAT applicable (18%), "0" = not applicable
-        # T109 API spec requires this on every goods line item
-        vat_applicable = "1" if tax_rate >= 17 else "0"
+        # vatApplicableFlag: always "1" for VAT-registered companies.
+        # "0" = "Out of Scope for VAT" — requires special URA authorization (error 2856).
+        # The actual rate (18%, 0%, exempt) is carried by taxRate + taxCategoryCode.
+        vat_applicable = "1"
 
         good: dict = {
             "item":              line.item_name or line.item_code,
