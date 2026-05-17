@@ -1,20 +1,21 @@
 /**
- * EFRIS Warehouse form enhancements.
+ * EFRIS Warehouse form — Get Branch from URA.
  *
- * "Get from URA" toolbar button — mirrors SAP B1: Warehouse master →
- * URA tab → "Get Details from URA" button.
+ * Toolbar button "Get Branch ID" calls T138 (Get All Branches),
+ * matches the ERPNext warehouse name against URA branchName, and
+ * fills efris_branch_id + efris_branch_name automatically.
  *
- * Queries URA T127 (Branch / Industry Config) and fills:
- *   • URA Warehouse   (efris_ura_warehouse)
- *   • URA Branch Id   (efris_branch_id)
- *   • URA Branch Name (efris_branch_name)
+ * If no name match is found, a selection dialog shows all URA branches
+ * so the user can pick the correct one manually.
+ *
+ * Mirrors SAP B1: Warehouse → URA tab → "Get Details from URA".
  */
 
 frappe.ui.form.on("Warehouse", {
 
     refresh(frm) {
-        const $btn = frm.add_custom_button(__("Get from URA"), () => {
-            efris_get_warehouse_details(frm);
+        const $btn = frm.add_custom_button(__("Get Branch ID from URA"), () => {
+            efris_get_branch(frm);
         });
 
         if ($btn && $btn.length) {
@@ -26,9 +27,9 @@ frappe.ui.form.on("Warehouse", {
 });
 
 
-// ─── Get warehouse / branch details from URA ──────────────────────────────────
+// ─── Main handler ─────────────────────────────────────────────────────────────
 
-function efris_get_warehouse_details(frm) {
+function efris_get_branch(frm) {
     if (frm.doc.__islocal) {
         frappe.msgprint({
             title:     __("Save First"),
@@ -45,16 +46,16 @@ function efris_get_warehouse_details(frm) {
     if (!company) {
         frappe.msgprint({
             title:     __("Company Required"),
-            message:   __("Please set the Company on this Warehouse before querying URA."),
+            message:   __("Set the Company on this warehouse before querying URA."),
             indicator: "orange",
         });
         return;
     }
 
-    frappe.dom.freeze(__("Fetching warehouse details from URA…"));
+    frappe.dom.freeze(__("Fetching branches from URA (T138)…"));
 
     frappe.call({
-        method: "efris_integration.api.warehouse.get_ura_details",
+        method: "efris_integration.api.warehouse.get_ura_branch",
         args:   { warehouse_name: frm.doc.name, company },
         freeze: false,
         callback(r) {
@@ -63,11 +64,21 @@ function efris_get_warehouse_details(frm) {
 
             const d = r.message || {};
 
-            if (d.status === "ok") {
-                _apply_warehouse_details(frm, d);
+            if (d.status === "error") {
+                frappe.msgprint({
+                    title:     __("URA Error"),
+                    message:   d.message || __("T138 call failed."),
+                    indicator: "red",
+                });
+                return;
+            }
+
+            if (d.status === "ok" && d.matched) {
+                // Auto-matched — show confirmation dialog
+                _show_match_dialog(frm, d);
             } else {
-                // Show raw fields if available so we can see what URA returned
-                _show_not_found(frm, d);
+                // No auto-match — let user pick from full list
+                _show_pick_dialog(frm, d);
             }
         },
         error() {
@@ -77,26 +88,28 @@ function efris_get_warehouse_details(frm) {
 }
 
 
-// ─── Apply details returned by URA to the form ────────────────────────────────
+// ─── Auto-match confirmed ─────────────────────────────────────────────────────
 
-function _apply_warehouse_details(frm, d) {
-    const raw  = d.raw_fields || {};
-    const rows = _build_detail_table(d, raw);
-
+function _show_match_dialog(frm, d) {
     const dialog = new frappe.ui.Dialog({
-        title:   __("URA Warehouse Details"),
-        fields:  [{ fieldtype: "HTML", options: rows }],
+        title:   __("URA Branch Matched"),
+        fields:  [{
+            fieldtype: "HTML",
+            options: `
+                <table class="table table-bordered" style="margin-top:8px;font-size:13px">
+                  <tr><th style="width:40%">${__("Branch Id")}</th>
+                      <td><b>${frappe.utils.escape_html(d.branch_id)}</b></td></tr>
+                  <tr><th>${__("Branch Name")}</th>
+                      <td>${frappe.utils.escape_html(d.branch_name)}</td></tr>
+                </table>
+                <div class="alert alert-success" style="font-size:12px;margin-top:6px">
+                    ${__("Name matched automatically. Click Apply to save.")}
+                </div>`,
+        }],
         primary_action_label: __("Apply"),
         primary_action() {
-            if (d.ura_warehouse) frm.set_value("efris_ura_warehouse", d.ura_warehouse);
-            if (d.branch_id)     frm.set_value("efris_branch_id",     d.branch_id);
-            if (d.branch_name)   frm.set_value("efris_branch_name",   d.branch_name);
-
+            _apply(frm, d.branch_id, d.branch_name);
             dialog.hide();
-            frappe.show_alert({
-                message:   __("URA warehouse details applied — please Save."),
-                indicator: "green",
-            }, 5);
         },
     });
 
@@ -105,56 +118,62 @@ function _apply_warehouse_details(frm, d) {
 }
 
 
-// ─── Build the HTML table for the dialog ─────────────────────────────────────
+// ─── Manual pick when no name match ──────────────────────────────────────────
 
-function _build_detail_table(d, raw) {
-    let rows = `
-        <table class="table table-bordered" style="margin-top:8px;font-size:13px">
-          <tr><th style="width:40%">${__("URA Warehouse")}</th>
-              <td><b>${frappe.utils.escape_html(d.ura_warehouse || "—")}</b></td></tr>
-          <tr><th>${__("Branch Id")}</th>
-              <td>${frappe.utils.escape_html(d.branch_id || "—")}</td></tr>
-          <tr><th>${__("Branch Name")}</th>
-              <td>${frappe.utils.escape_html(d.branch_name || "—")}</td></tr>
-        </table>`;
+function _show_pick_dialog(frm, d) {
+    const branches = d.all_branches || [];
 
-    // Show raw fields if name is missing (helps identify correct field names)
-    if (!d.branch_name && Object.keys(raw).length) {
-        rows += `<p class="text-muted" style="font-size:11px;margin-top:8px">
-                     Raw URA response fields:</p>
-                 <table class="table table-bordered" style="font-size:11px">`;
-        for (const [k, v] of Object.entries(raw)) {
-            rows += `<tr><td style="color:#888">${frappe.utils.escape_html(k)}</td>
-                         <td>${frappe.utils.escape_html(
-                             typeof v === "object" ? JSON.stringify(v) : String(v)
-                         )}</td></tr>`;
-        }
-        rows += `</table>`;
-    }
+    // Build option list
+    const options = branches.map(b =>
+        `<option value="${frappe.utils.escape_html(b.branch_id)}">
+             ${frappe.utils.escape_html(b.branch_name)}
+             &nbsp;(${frappe.utils.escape_html(b.branch_id)})
+         </option>`
+    ).join("");
 
-    return rows;
+    const dialog = new frappe.ui.Dialog({
+        title:   __("Select URA Branch"),
+        fields:  [{
+            fieldtype: "HTML",
+            options: `
+                <p style="color:#e67e22;font-size:13px">
+                    <b>${__("No automatic match found.")}</b><br>
+                    ${frappe.utils.escape_html(d.message || "")}
+                </p>
+                <label style="font-size:13px"><b>${__("Select Branch")}</b></label>
+                <select id="efris-branch-select" class="form-control"
+                        style="margin-top:4px;font-size:13px">
+                    <option value="">— ${__("Select a branch")} —</option>
+                    ${options}
+                </select>`,
+        }],
+        primary_action_label: __("Apply Selected"),
+        primary_action() {
+            const sel = dialog.$wrapper.find("#efris-branch-select");
+            const bid = sel.val();
+            if (!bid) {
+                frappe.msgprint(__("Please select a branch first."));
+                return;
+            }
+            const bname = sel.find("option:selected").text()
+                             .replace(/\s*\(.*\)$/, "").trim();
+            _apply(frm, bid, bname);
+            dialog.hide();
+        },
+    });
+
+    dialog.show();
 }
 
 
-// ─── Not-found / error dialog ─────────────────────────────────────────────────
+// ─── Write values to form and alert ──────────────────────────────────────────
 
-function _show_not_found(frm, d) {
-    const raw  = d.raw_fields || {};
-    let   body = `<p>${frappe.utils.escape_html(
-                      d.message || __("URA returned no details for this warehouse.")
-                  )}</p>`;
+function _apply(frm, branch_id, branch_name) {
+    if (branch_id)   frm.set_value("efris_branch_id",   branch_id);
+    if (branch_name) frm.set_value("efris_branch_name", branch_name);
 
-    if (Object.keys(raw).length) {
-        body += `<p class="text-muted" style="font-size:11px">Raw URA response:</p>
-                 <table class="table table-bordered" style="font-size:11px">`;
-        for (const [k, v] of Object.entries(raw)) {
-            body += `<tr><td style="color:#888">${frappe.utils.escape_html(k)}</td>
-                         <td>${frappe.utils.escape_html(
-                             typeof v === "object" ? JSON.stringify(v) : String(v)
-                         )}</td></tr>`;
-        }
-        body += `</table>`;
-    }
-
-    frappe.msgprint({ title: __("URA — No Branch Details"), message: body, indicator: "orange" });
+    frappe.show_alert({
+        message:   __("Branch ID applied — please Save."),
+        indicator: "green",
+    }, 5);
 }
