@@ -354,16 +354,47 @@ CUSTOM_FIELDS = {
     ],
 
     # ─── Warehouse ────────────────────────────────────────────────────────
+    # Mirrors SAP B1: Warehouse master → URA tab
+    #   URA Warehouse  — Link to the URA warehouse code (maps this ERPNext
+    #                    warehouse to the corresponding URA warehouse)
+    #   URA Branch Id  — URA branch identifier for this warehouse
+    #   URA Branch Name — Human-readable URA branch name
     "Warehouse": [
-        {"fieldname": "efris_section", "fieldtype": "Section Break", "label": "EFRIS / URA", "insert_after": "company", "collapsible": 1, "module": "EFRIS Integration"},
-        {"fieldname": "efris_branch_id", "fieldtype": "Data", "label": "EFRIS Branch ID"},
-        {"fieldname": "efris_branch_name", "fieldtype": "Data", "label": "EFRIS Branch Name"},
-        {"fieldname": "efris_branch_code", "fieldtype": "Data", "label": "EFRIS Branch Code"},
+        {"fieldname": "efris_section",      "fieldtype": "Section Break", "label": "URA",
+         "insert_after": "company",         "collapsible": 0,
+         "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_ura_warehouse","fieldtype": "Data",          "label": "URA Warehouse",
+         "insert_after": "efris_section",
+         "description": "URA warehouse code that this ERPNext warehouse maps to.",
+         "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_branch_id",    "fieldtype": "Data",          "label": "URA Branch Id",
+         "insert_after": "efris_ura_warehouse",
+         "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_branch_name",  "fieldtype": "Data",          "label": "URA Branch Name",
+         "insert_after": "efris_branch_id",
+         "module": "EFRIS Integration"},
     ],
 }
 
 
 def after_install():
+    _remove_obsolete_fields()
     create_custom_fields(CUSTOM_FIELDS, ignore_validate=True)
     frappe.db.commit()
     frappe.msgprint("EFRIS Integration: Custom fields installed successfully.")
+
+
+def _remove_obsolete_fields():
+    """Drop custom fields that were renamed or removed across versions."""
+    obsolete = [
+        # Warehouse — efris_branch_code removed; replaced by efris_ura_warehouse
+        ("Warehouse", "efris_branch_code"),
+    ]
+    for dt, fieldname in obsolete:
+        cf_name = f"{dt}-{fieldname}"
+        if frappe.db.exists("Custom Field", cf_name):
+            frappe.delete_doc("Custom Field", cf_name, ignore_missing=True)
+            frappe.logger("efris").info(f"EFRIS: removed obsolete custom field {cf_name}")
