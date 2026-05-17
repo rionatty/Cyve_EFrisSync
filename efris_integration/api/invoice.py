@@ -1,8 +1,8 @@
 """
-T108 — Submit AR Invoice (Sales Invoice) to EFRIS
+T109 — Submit AR Invoice (Sales Invoice) to EFRIS  [SAP B1: ARReserveInvoice.cs uses T109]
 T106 — Query invoices
 
-Mirrors: ARInvoice.cs, UraARInvoice.cs, T108.cs, T106.cs
+Mirrors: ARReserveInvoice.cs, UraARInvoice.cs, T109.cs, T106.cs
 
 Pricing modes (controlled by EFRIS Settings):
   gross_on_ar_invoice  → unitPrice and total are VAT-inclusive (gross)
@@ -27,7 +27,7 @@ from efris_integration.utils.helpers import (
 from efris_integration.excise import compute_excise_for_line
 
 
-# ─── T108: Submit Sales Invoice ───────────────────────────────────────────
+# ─── T109: Submit Sales Invoice (AR Invoice) ──────────────────────────────
 
 @frappe.whitelist()
 def submit_sales_invoice(invoice_name: str) -> dict:
@@ -70,26 +70,26 @@ def submit_sales_invoice(invoice_name: str) -> dict:
         "extend":           {"reason": "", "reasonCode": ""},
     }
 
-    result = client.call("T108", payload, encrypt=True, sign=True,
+    result = client.call("T109", payload, encrypt=True, sign=True,
                          doc_type="Sales Invoice", doc_name=invoice_name)
 
     # ── Log raw result so we can debug response structure ─────────────────
     frappe.logger("efris").info(
-        f"[T108 raw result] {invoice_name}: "
+        f"[T109 raw result] {invoice_name}: "
         f"keys={list(result.keys()) if result else 'EMPTY_DICT'} | "
         f"preview={frappe.as_json(result)[:400]}"
     )
 
     _save_result(doc, result)
 
-    # ── T106 fallback: if T108 returned no invoice details, query URA ─────
+    # ── T106 fallback: if T109 returned no invoice details, query URA ─────
     # URA sometimes returns returnCode=00 but an empty response body.
     # The invoice IS registered — T106 is the reliable way to confirm and
     # retrieve invoiceId, antifakeCode, FDN number, and QR code.
     doc.reload()
     if not doc.get("efris_invoice_id"):
         frappe.logger("efris").info(
-            f"[T108] No invoice_id in response for {invoice_name} — "
+            f"[T109] No invoice_id in response for {invoice_name} — "
             "attempting T106 fallback to fetch URA invoice details"
         )
         try:
@@ -122,7 +122,7 @@ def fetch_invoice_from_ura(invoice_name: str) -> dict:
     """
     Refresh EFRIS tab fields by querying URA T106 for this invoice.
     Called by the "Refresh from EFRIS" button on the Sales Invoice form.
-    Works even when efris_invoice_id is empty (T108 returned no details).
+    Works even when efris_invoice_id is empty (T109 returned no details).
     """
     doc    = frappe.get_doc("Sales Invoice", invoice_name)
     client = EFRISClient(company=doc.company)
@@ -157,15 +157,15 @@ def query_invoices(
                        doc_type="Sales Invoice", doc_name="Query")
 
 
-# ─── T106 fallback: called after T108 returns empty content ───────────────────
+# ─── T106 fallback: called after T109 returns empty content ───────────────────
 
 def _t106_fallback(doc, client: "EFRISClient", invoice_name: str) -> None:
     """
-    Query T106 to retrieve invoice details when T108 returned empty content.
+    Query T106 to retrieve invoice details when T109 returned empty content.
 
-    URA EFRIS sometimes returns returnCode="00" on T108 but an empty response
+    URA EFRIS sometimes returns returnCode="00" on T109 but an empty response
     body — the invoice IS registered on URA's side, we just don't get the
-    invoiceId / antifakeCode / FDN back in the T108 response.
+    invoiceId / antifakeCode / FDN back in the T109 response.
 
     This function queries T106 (list invoices), identifies our invoice by
     sellerDetails.referenceNo or basicInformation.invoiceNo, then calls
@@ -175,7 +175,7 @@ def _t106_fallback(doc, client: "EFRISClient", invoice_name: str) -> None:
 
     today = date.today().strftime("%Y-%m-%d")
 
-    # First try: search by our ERPNext invoice name (sent as referenceNo in T108)
+    # First try: search by our ERPNext invoice name (sent as referenceNo in T109)
     # Some EFRIS versions support filtering by invoiceNo (which we set to doc.name)
     for search_no in [invoice_name, ""]:
         payload = {
@@ -301,10 +301,11 @@ def _buyer_details(doc, buyer: dict) -> dict:
     """
     Map ERPNext Customer EFRIS fields to URA buyerDetails object.
 
-    SAP B1 (ARInvoice.cs) buyerType mapping:
+    SAP B1 ARReserveInvoice.cs CreateInvoice() buyer type mapping:
       B2B / B2G → "0"   (business / government — Tax ID required)
       B2C       → "1"   (individual consumer)
-      B2F       → "2"   (foreign / export — TIN must be empty)
+      B2F       → "0"   (foreign/export — TIN empty; NOTE: SAP B1 has "2" commented out,
+                          actual code uses "0": // str4 = "2"; str4 = "0";)
     """
     buyer_type_raw = (
         buyer.get("efris_business_type")
@@ -312,8 +313,9 @@ def _buyer_details(doc, buyer: dict) -> dict:
         or "B2C"
     ).strip().upper()
 
-    # URA numeric buyer type — mirrors SAP B1 CreateInvoice() BuyerType logic
-    _TYPE_MAP = {"B2B": "0", "B2G": "0", "B2C": "1", "B2F": "2"}
+    # URA numeric buyer type — mirrors SAP B1 CreateInvoice() BuyerType logic exactly.
+    # B2F maps to "0" NOT "2" — the "2" line is commented out in the working SAP B1 code.
+    _TYPE_MAP = {"B2B": "0", "B2G": "0", "B2C": "1", "B2F": "0"}
     ura_buyer_type = _TYPE_MAP.get(buyer_type_raw, "1")
 
     # B2F (foreign) buyers must have an empty TIN (SAP B1: VatId = "" when BType="B2F")
@@ -566,9 +568,9 @@ def _tax_rate_label(ura_rate_str: str) -> str:
 
 def _save_result(doc, result: dict):
     """
-    Persist URA T108/T106 response to the Sales Invoice EFRIS tab fields.
+    Persist URA T109/T106 response to the Sales Invoice EFRIS tab fields.
 
-    SAP B1 field mapping (UraARInvoice.cs → SaveEFRISResult):
+    SAP B1 field mapping (ARReserveInvoice.cs → SaveEFRISResult):
       response.BasicInformation.InvoiceId    → efris_invoice_id
       response.BasicInformation.AntifakeCode → efris_antifake_code
       response.BasicInformation.invoiceNo    → efris_fdn_number
@@ -582,7 +584,7 @@ def _save_result(doc, result: dict):
             f"_save_result called with empty result for {doc.name}. "
             "URA returned returnCode=00 but no response body. "
             "Check EFRIS Log for the raw envelope — the invoice may still be registered.",
-            f"EFRIS Empty T108 Response [{doc.name}]",
+            f"EFRIS Empty T109 Response [{doc.name}]",
         )
         # Do NOT set any fields — caller will attempt T106 fallback
         return
