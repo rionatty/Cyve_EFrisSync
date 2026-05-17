@@ -20,6 +20,7 @@ from efris_integration.utils.helpers import (
     get_customer_efris_fields,
     get_efris_settings,
     get_item_efris_fields,
+    map_tax_code,
     map_uom,
     safe_float,
     safe_str,
@@ -448,11 +449,10 @@ def _build_goods_and_tax(
     for idx, line in enumerate(doc.items, start=1):
         _company    = company or doc.company or ""
         item_fields = get_item_efris_fields(line.item_code)
-        tax_rate    = _get_line_tax_rate(doc, line)   # float, e.g. 18.0
         uom_code    = map_uom(line.uom, _company)
 
-        # Resolve URA tax category for this line
-        cat_code, cat_name, ura_rate_str = _tax_bucket(tax_rate)
+        # Resolve URA tax rate from EFRIS Tax Mapping (account_head → ura_tax_code)
+        tax_rate, cat_code, cat_name, ura_rate_str = _resolve_line_tax(doc, line, _company)
 
         # ── Amounts ─────────────────────────────────────────────────────────
         net_unit_price  = safe_float(line.rate)
@@ -574,35 +574,59 @@ def _pay_way(doc) -> list:
     ]
 
 
-def _get_line_tax_rate(doc, line) -> float:
+def _resolve_line_tax(doc, line, company: str) -> tuple:
+    """
+    Resolve URA tax info for a line by looking up the invoice's tax account
+    in EFRIS Tax Mapping (configured per-company in ERPNext).
+
+    Lookup order:
+      1. Find the first "On Net Total" tax row on the invoice → account_head
+      2. Look that account up in EFRIS Tax Mapping → ura_tax_code
+         ("18"  → Standard 18%   → taxRate "0.18",  category "01")
+         ("0"   → Zero-rated     → taxRate "0",     category "02")
+         ("-"   → Exempt         → taxRate "-",     category "03")
+      3. Fall back to 18% if no mapping row exists (same as SAP B1 default).
+
+    Returns:
+        (tax_rate_float, cat_code, cat_name, ura_rate_str)
+        e.g. (18.0, "01", "Standard", "0.18")
+    """
+    # Step 1 — get the tax account head from the invoice taxes table
+    tax_account = ""
     for tax in (doc.taxes or []):
         if tax.charge_type == "On Net Total":
-            return safe_float(tax.rate)
-    return 18.0
+            tax_account = tax.account_head or ""
+            break
+
+    # Step 2 — look it up in EFRIS Tax Mapping
+    ura_code = ""
+    if tax_account:
+        ura_code = map_tax_code(tax_account, company)   # "18", "0", or "-"
+
+    # Step 3 — convert URA code to rate info
+    return _ura_code_to_rate(ura_code)
 
 
-def _get_line_tax_account(doc, line) -> str:
-    for tax in (doc.taxes or []):
-        return tax.account_head or ""
-    return ""
-
-
-def _tax_bucket(rate: float) -> tuple:
+def _ura_code_to_rate(ura_code: str) -> tuple:
     """
-    Convert a float VAT rate to (URA category code, category name, URA rate string).
+    Convert a URA tax code string to (rate_float, cat_code, cat_name, rate_str).
 
-    SAP B1 ARInvoice.cs mapping:
-      TaxRate == "18"           → taxCategoryCode "01", taxRate "0.18", name "Standard"
-      TaxRate == "0"            → taxCategoryCode "02", taxRate "0",    name "Zero-rated"
-      TaxRate == "00" (scope)   → taxCategoryCode "11", taxRate "0",    name "F: VAT OUT OF SCOPE"
-      else (exempt)             → taxCategoryCode "03", taxRate "-",    name "Exempt"
+    Mapping (mirrors SAP B1 ARInvoice.cs):
+      "18"  → Standard VAT 18%  → "01", "0.18"
+      "0"   → Zero-rated        → "02", "0"
+      "-"   → Exempt            → "03", "-"
+      ""    → fallback to 18%   → "01", "0.18"
     """
-    if rate >= 17:      # 18 % standard
-        return "01", "Standard", "0.18"
-    elif rate == 0:     # zero-rated
-        return "02", "Zero-rated", "0"
-    else:               # exempt / not applicable
-        return "03", "Exempt", "-"
+    code = (ura_code or "").strip()
+    if code in ("18", "0.18"):
+        return 18.0, "01", "Standard", "0.18"
+    elif code == "0":
+        return 0.0,  "02", "Zero-rated", "0"
+    elif code == "-":
+        return 0.0,  "03", "Exempt", "-"
+    else:
+        # Unknown / empty — default to standard 18% (SAP B1 fallback)
+        return 18.0, "01", "Standard", "0.18"
 
 
 def _tax_rate_label(ura_rate_str: str) -> str:
