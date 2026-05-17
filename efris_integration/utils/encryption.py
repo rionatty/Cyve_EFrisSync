@@ -157,7 +157,14 @@ def decode_response_data(data: dict, aes_key: bytes) -> dict:
     if zip_code == "1":
         raw = gzip.decompress(raw)
 
-    return json.loads(raw.decode("utf-8"))
+    text = raw.decode("utf-8").strip()
+
+    # URA sometimes returns an empty body on success (no payload needed).
+    # json.loads("") raises JSONDecodeError — return {} instead.
+    if not text:
+        return {}
+
+    return json.loads(text)
 
 
 def rsa_sign(content_b64: str, private_key_pem: str) -> str:

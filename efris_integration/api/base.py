@@ -157,6 +157,9 @@ class EFRISClient:
                     "padding" in err or "incorrect" in err
                     or "codec" in err or "utf" in err or "decode" in err
                     or "json" in err or "unpack" in err
+                    or "expecting value" in err   # json.loads("") — empty decrypted body
+                    or "extra data" in err        # json.loads of binary garbage
+                    or isinstance(exc, (ValueError, UnicodeDecodeError))
                 )
                 if _is_decrypt_failure:
                     plain = _parse_plain_content(content)
