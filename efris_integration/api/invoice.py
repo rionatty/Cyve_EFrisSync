@@ -329,28 +329,38 @@ def _tax_category_name(code: str) -> str:
 
 
 def _save_result(doc, result: dict):
-    """Persist URA T108 response to the Sales Invoice EFRIS tab fields."""
-    frappe.logger("efris").info(
-        f"T108 _save_result for {doc.name} — result keys: {list(result.keys())}\nFull: {result}"
-    )
     """
     Persist URA T108 response to the Sales Invoice EFRIS tab fields.
 
-    SAP B1 field mapping (ARInvoice.cs → SaveEFRISResult):
-      invoiceId      → Invoice ID       (efris_invoice_id)
-      antifakeCode   → Verification Code (efris_antifake_code)
-      invoiceNo      → FDN Number       (efris_fdn_number)
-      qrCode / URL   → QR Code          (efris_qr_code)  — validation URL
-      localPath      → QR Path          (efris_qr_path)
-      remark         → Remark           (efris_remark)
+    SAP B1 field mapping (UraARInvoice.cs → SaveEFRISResult):
+      response.BasicInformation.InvoiceId    → efris_invoice_id
+      response.BasicInformation.AntifakeCode → efris_antifake_code
+      response.BasicInformation.invoiceNo    → efris_fdn_number
+      response.Summary.QrCode                → efris_qr_code
+      localPath / qrPath                     → efris_qr_path
+      remark / returnMessage                 → efris_remark
     """
-    invoice_id  = result.get("invoiceId", "")
-    antifake    = result.get("antifakeCode", "")
-    fdn_number  = result.get("invoiceNo", "") or result.get("fdnNo", "")
-    remark      = result.get("remark", "") or result.get("returnMessage", "") or "SUCCESS"
+    # T108 response nests fields under basicInformation and summary sub-objects
+    basic_info = result.get("basicInformation") or {}
+    summary    = result.get("summary") or {}
+
+    invoice_id = basic_info.get("invoiceId", "") or result.get("invoiceId", "")
+    antifake   = basic_info.get("antifakeCode", "") or result.get("antifakeCode", "")
+    fdn_number = (
+        basic_info.get("invoiceNo", "")
+        or result.get("invoiceNo", "")
+        or result.get("fdnNo", "")
+    )
+    remark = (
+        result.get("remark", "")
+        or result.get("returnMessage", "")
+        or summary.get("remarks", "")
+        or "SUCCESS"
+    )
 
     # Build URA validation URL (shown in QR Code field, same as SAP B1)
-    qr_url = result.get("qrCode", "")
+    # T108 returns qrCode inside summary sub-object (UraARInvoice.cs: response.Summary.QrCode)
+    qr_url = summary.get("qrCode", "") or result.get("qrCode", "")
     if not qr_url and antifake and fdn_number:
         from efris_integration.utils.helpers import get_efris_settings
         settings = get_efris_settings(doc.company)
@@ -363,7 +373,11 @@ def _save_result(doc, result: dict):
         qr_url = generate_qr_code_b64(antifake)
 
     # QR Path — local file reference (SAP B1 saves a PNG file)
-    qr_path = result.get("qrPath", "") or result.get("localPath", "")
+    qr_path = (
+        summary.get("qrPath", "")
+        or result.get("qrPath", "")
+        or result.get("localPath", "")
+    )
 
     doc.db_set("efris_invoice_id",    invoice_id,       update_modified=False)
     doc.db_set("efris_antifake_code", antifake,         update_modified=False)

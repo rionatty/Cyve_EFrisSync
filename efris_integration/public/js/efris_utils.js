@@ -10,6 +10,8 @@
 // ─── Status badge ──────────────────────────────────────────────────────────
 /**
  * Shows a small EFRIS status indicator in the form's dashboard area.
+ * Uses frm.dashboard.add_indicator() which is the correct Frappe v15/v16 API.
+ * Wrapped in try-catch so a missing API never breaks button rendering.
  */
 window.efris_add_status_badge = function (frm) {
     if (!frm.doc.efris_status) return;
@@ -22,16 +24,24 @@ window.efris_add_status_badge = function (frm) {
     };
     const colour = colour_map[frm.doc.efris_status] || "gray";
 
-    frm.dashboard.add_badge(
-        `<span class="indicator-pill ${colour}">`
-        + `<span>EFRIS: ${frm.doc.efris_status}</span></span>`
-    );
-
-    if (frm.doc.efris_invoice_id) {
-        frm.dashboard.add_comment(
-            `EFRIS Invoice ID: <b>${frm.doc.efris_invoice_id}</b>`,
-            "blue", true
-        );
+    try {
+        // add_indicator is the standard Frappe v14/v15/v16 dashboard API
+        if (frm.dashboard && typeof frm.dashboard.add_indicator === "function") {
+            frm.dashboard.add_indicator(
+                `EFRIS: ${frm.doc.efris_status}`, colour
+            );
+        }
+        if (frm.doc.efris_invoice_id) {
+            if (frm.dashboard && typeof frm.dashboard.add_comment === "function") {
+                frm.dashboard.add_comment(
+                    `EFRIS Invoice ID: <b>${frm.doc.efris_invoice_id}</b>`,
+                    "blue", true
+                );
+            }
+        }
+    } catch (e) {
+        // Never let a dashboard API change break the rest of the form
+        console.warn("EFRIS: status badge render failed —", e);
     }
 };
 

@@ -118,15 +118,6 @@ class EFRISClient:
         resp_data = response.get("data", {})
         content = resp_data.get("content", "")
 
-        # Log full raw response so we can inspect what URA actually returned
-        frappe.logger("efris").info(
-            f"[{interface_code}] raw response data block:\n"
-            f"  encryptCode : {resp_data.get('dataDescription', {}).get('encryptCode', '?')}\n"
-            f"  content len : {len(content)}\n"
-            f"  content     : {content[:300]}\n"
-            f"  full resp   : {str(response)[:500]}"
-        )
-
         if not content:
             return {}
 
