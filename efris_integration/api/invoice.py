@@ -73,17 +73,66 @@ def submit_sales_invoice(invoice_name: str) -> dict:
     result = client.call("T108", payload, encrypt=True, sign=True,
                          doc_type="Sales Invoice", doc_name=invoice_name)
 
+    # ── Log raw result so we can debug response structure ─────────────────
+    frappe.logger("efris").info(
+        f"[T108 raw result] {invoice_name}: "
+        f"keys={list(result.keys()) if result else 'EMPTY_DICT'} | "
+        f"preview={frappe.as_json(result)[:400]}"
+    )
+
     _save_result(doc, result)
 
-    # Read from the correct nested path for the success toast
-    _basic = result.get("basicInformation") or {}
-    _inv_id = _basic.get("invoiceId", "") or result.get("invoiceId", "")
+    # ── T106 fallback: if T108 returned no invoice details, query URA ─────
+    # URA sometimes returns returnCode=00 but an empty response body.
+    # The invoice IS registered — T106 is the reliable way to confirm and
+    # retrieve invoiceId, antifakeCode, FDN number, and QR code.
+    doc.reload()
+    if not doc.get("efris_invoice_id"):
+        frappe.logger("efris").info(
+            f"[T108] No invoice_id in response for {invoice_name} — "
+            "attempting T106 fallback to fetch URA invoice details"
+        )
+        try:
+            _t106_fallback(doc, client, invoice_name)
+            doc.reload()
+        except Exception as exc:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"EFRIS T106 fallback failed [{invoice_name}]"
+            )
+
+    # ── Success toast ──────────────────────────────────────────────────────
+    doc.reload()
+    _inv_id = doc.get("efris_invoice_id") or ""
     frappe.msgprint(
         f"✅ Invoice {invoice_name} submitted to EFRIS."
-        + (f"\nInvoice ID: {_inv_id}" if _inv_id else ""),
+        + (f"<br>Invoice ID: <b>{_inv_id}</b>" if _inv_id else
+           "<br><b>Note:</b> URA confirmed receipt but did not return invoice details yet. "
+           "Click <b>Refresh from EFRIS</b> in the EFRIS menu to fetch them."),
         indicator="green",
+        title="EFRIS Submission",
     )
     return result
+
+
+# ─── Fetch & save URA details for an already-submitted invoice ───────────────
+
+@frappe.whitelist()
+def fetch_invoice_from_ura(invoice_name: str) -> dict:
+    """
+    Refresh EFRIS tab fields by querying URA T106 for this invoice.
+    Called by the "Refresh from EFRIS" button on the Sales Invoice form.
+    Works even when efris_invoice_id is empty (T108 returned no details).
+    """
+    doc    = frappe.get_doc("Sales Invoice", invoice_name)
+    client = EFRISClient(company=doc.company)
+    _t106_fallback(doc, client, invoice_name)
+    doc.reload()
+    inv_id = doc.get("efris_invoice_id") or ""
+    if inv_id:
+        return {"status": "ok", "invoice_id": inv_id}
+    return {"status": "not_found",
+            "message": "Invoice not yet visible in URA T106. Try again in a few moments."}
 
 
 # ─── T106: Query Invoices ─────────────────────────────────────────────────
@@ -106,6 +155,120 @@ def query_invoices(
     }
     return client.call("T106", payload, encrypt=True, sign=True,
                        doc_type="Sales Invoice", doc_name="Query")
+
+
+# ─── T106 fallback: called after T108 returns empty content ───────────────────
+
+def _t106_fallback(doc, client: "EFRISClient", invoice_name: str) -> None:
+    """
+    Query T106 to retrieve invoice details when T108 returned empty content.
+
+    URA EFRIS sometimes returns returnCode="00" on T108 but an empty response
+    body — the invoice IS registered on URA's side, we just don't get the
+    invoiceId / antifakeCode / FDN back in the T108 response.
+
+    This function queries T106 (list invoices), identifies our invoice by
+    sellerDetails.referenceNo or basicInformation.invoiceNo, then calls
+    _save_result() with the matched record so the EFRIS tab fields are populated.
+    """
+    from datetime import date
+
+    today = date.today().strftime("%Y-%m-%d")
+
+    # First try: search by our ERPNext invoice name (sent as referenceNo in T108)
+    # Some EFRIS versions support filtering by invoiceNo (which we set to doc.name)
+    for search_no in [invoice_name, ""]:
+        payload = {
+            "invoiceNo": search_no,
+            "startDate": today,
+            "endDate":   today,
+            "pageNo":    "1",
+            "pageSize":  "20",
+        }
+        try:
+            result = client.call("T106", payload, encrypt=True, sign=True,
+                                 doc_type="Sales Invoice", doc_name=invoice_name)
+        except Exception as exc:
+            frappe.log_error(str(exc), f"EFRIS T106 fallback query failed [{invoice_name}]")
+            return
+
+        frappe.logger("efris").info(
+            f"[T106 fallback] {invoice_name}: search_no={search_no!r} "
+            f"keys={list(result.keys()) if result else 'EMPTY'} "
+            f"preview={frappe.as_json(result)[:300]}"
+        )
+
+        if not result:
+            continue
+
+        # ── Normalise T106 response to a flat list of invoice records ──────
+        invoices = _extract_invoice_list(result)
+
+        if not invoices:
+            frappe.log_error(
+                f"T106 returned no invoice records for {invoice_name}. "
+                f"Result: {frappe.as_json(result)[:500]}",
+                f"EFRIS T106 Fallback — empty list [{invoice_name}]",
+            )
+            continue
+
+        # ── Find the matching invoice ──────────────────────────────────────
+        matched = None
+        for inv in invoices:
+            if not isinstance(inv, dict):
+                continue
+            basic  = inv.get("basicInformation") or {}
+            seller = inv.get("sellerDetails")    or {}
+            # Match by our ERPNext name sent as referenceNo OR as basicInformation.invoiceNo
+            if (seller.get("referenceNo") == invoice_name
+                    or basic.get("invoiceNo") == invoice_name):
+                matched = inv
+                break
+
+        # Fallback: take the first record returned (most recent upload today)
+        if not matched:
+            matched = invoices[0] if invoices else None
+
+        if matched:
+            frappe.logger("efris").info(
+                f"[T106 fallback] Matched invoice for {invoice_name}: "
+                f"basicInfo={list((matched.get('basicInformation') or {}).keys())}"
+            )
+            _save_result(doc, matched)
+            return
+
+    frappe.log_error(
+        f"T106 fallback exhausted all attempts for {invoice_name}. "
+        "Invoice may not yet be visible in T106. "
+        "Use 'Refresh from EFRIS' later to fetch URA details.",
+        f"EFRIS T106 Fallback — not found [{invoice_name}]",
+    )
+
+
+def _extract_invoice_list(result: dict) -> list:
+    """
+    Normalise a T106 response (many possible shapes) to a flat list of
+    invoice record dicts.  Returns an empty list if nothing useful found.
+    """
+    if isinstance(result, list):
+        return result
+
+    if not isinstance(result, dict):
+        return []
+
+    # Common T106 response keys seen in the wild
+    for key in ("invoiceList", "data", "list", "records", "invoices"):
+        v = result.get(key)
+        if isinstance(v, list) and v:
+            return v
+        if isinstance(v, dict) and v.get("basicInformation"):
+            return [v]
+
+    # Some T-codes return a single invoice at the top level
+    if result.get("basicInformation"):
+        return [result]
+
+    return []
 
 
 # ─── Shared payload builders (also used by credit_note.py / sales_order.py) ──
@@ -403,7 +566,7 @@ def _tax_rate_label(ura_rate_str: str) -> str:
 
 def _save_result(doc, result: dict):
     """
-    Persist URA T108 response to the Sales Invoice EFRIS tab fields.
+    Persist URA T108/T106 response to the Sales Invoice EFRIS tab fields.
 
     SAP B1 field mapping (UraARInvoice.cs → SaveEFRISResult):
       response.BasicInformation.InvoiceId    → efris_invoice_id
@@ -413,6 +576,17 @@ def _save_result(doc, result: dict):
       URA validation URL                     → efris_qr_path   (clickable link)
       remark / returnMessage                 → efris_remark
     """
+    # ── 0. Guard: empty response ──────────────────────────────────────────────
+    if not result:
+        frappe.log_error(
+            f"_save_result called with empty result for {doc.name}. "
+            "URA returned returnCode=00 but no response body. "
+            "Check EFRIS Log for the raw envelope — the invoice may still be registered.",
+            f"EFRIS Empty T108 Response [{doc.name}]",
+        )
+        # Do NOT set any fields — caller will attempt T106 fallback
+        return
+
     # ── 1. Unwrap list-wrapped responses ─────────────────────────────────────
     # URA occasionally returns the body as a JSON array.
     # _parse_plain_content wraps that as {"data": [...]}.
@@ -428,6 +602,13 @@ def _save_result(doc, result: dict):
     basic_info   = result.get("basicInformation") or {}
     summary_resp = result.get("summary") or {}
 
+    frappe.logger("efris").info(
+        f"[_save_result] {doc.name}: "
+        f"basicInfo keys={list(basic_info.keys())} | "
+        f"summary keys={list(summary_resp.keys())} | "
+        f"top-level keys={list(result.keys())}"
+    )
+
     invoice_id = basic_info.get("invoiceId", "")    or result.get("invoiceId", "")
     antifake   = basic_info.get("antifakeCode", "") or result.get("antifakeCode", "")
     fdn_number = (
@@ -439,7 +620,7 @@ def _save_result(doc, result: dict):
         result.get("remark", "")
         or result.get("returnMessage", "")
         or summary_resp.get("remarks", "")
-        or "SUCCESS"
+        or ("SUCCESS" if invoice_id else "Registered — awaiting URA details")
     )
 
     # ── 3. Build the URA validation URL ──────────────────────────────────────
@@ -476,15 +657,23 @@ def _save_result(doc, result: dict):
             frappe.log_error(str(exc), f"EFRIS QR image generation failed [{doc.name}]")
 
     # ── 5. Persist to EFRIS tab fields ───────────────────────────────────────
-    doc.db_set("efris_invoice_id",    invoice_id,    update_modified=False)
-    doc.db_set("efris_antifake_code", antifake,      update_modified=False)
-    doc.db_set("efris_fdn_number",    fdn_number,    update_modified=False)
+    # Only update fields that we actually have data for
+    if invoice_id:
+        doc.db_set("efris_invoice_id",    invoice_id,    update_modified=False)
+    if antifake:
+        doc.db_set("efris_antifake_code", antifake,      update_modified=False)
+    if fdn_number:
+        doc.db_set("efris_fdn_number",    fdn_number,    update_modified=False)
     # efris_qr_code  → base64 PNG data-URI  (rendered as <img> in View QR dialog)
-    doc.db_set("efris_qr_code",       qr_image_b64,  update_modified=False)
+    if qr_image_b64:
+        doc.db_set("efris_qr_code",       qr_image_b64,  update_modified=False)
     # efris_qr_path  → URA verification URL (clickable link for manual validation)
-    doc.db_set("efris_qr_path",       validation_url, update_modified=False)
+    if validation_url:
+        doc.db_set("efris_qr_path",       validation_url, update_modified=False)
     doc.db_set("efris_remark",        remark,         update_modified=False)
-    doc.db_set("efris_status",        "Submitted",    update_modified=False)
+    # Only mark "Submitted" when we have a real URA invoice_id — not just returnCode=00
+    efris_status = "Submitted" if invoice_id else "Pending"
+    doc.db_set("efris_status",        efris_status,   update_modified=False)
     doc.db_set("efris_submitted_at",  datetime.now(), update_modified=False)
 
 

@@ -1,10 +1,10 @@
 /**
- * EFRIS Sales Invoice form enhancements.
+ * EFRIS Sales Invoice form enhancements.  v2.1
  *
  * Button layout (mirrors SAP B1 AR Invoice toolbar):
- *   [Upload to EFRIS]  ← standalone PRIMARY button, always visible in toolbar
- *   [EFRIS ▾]          ← group dropdown for secondary actions
- *       Refresh from EFRIS
+ *   [Upload to EFRIS]      <- standalone PRIMARY button (no efris_invoice_id yet)
+ *   [EFRIS dropdown]
+ *       Refresh from EFRIS <- fetches URA details (shown when Pending OR Submitted)
  *       Recalculate Excise
  *       View QR Code
  *       Verify on URA
@@ -12,9 +12,9 @@
  *
  * Safety rules:
  *   - Entire body wrapped in try-catch so EFRIS errors never remove standard buttons
- *   - Every efris_utils.js function guarded with typeof check (bench build may not
- *     have run yet; calling an undefined function throws and kills all buttons)
- *   - frm.add_custom_button() return value stored before .addClass() (can be null)
+ *   - Every efris_utils.js function guarded with typeof check
+ *   - frm.add_custom_button() return stored before .addClass() (can be null)
+ *   - console.log("[EFRIS JS v2.1]") on every refresh so we can confirm the file is loaded
  */
 
 /* global frappe, __ */
@@ -22,10 +22,14 @@
 frappe.ui.form.on("Sales Invoice", {
 
     refresh: function (frm) {
+        // Confirm this JS version is loaded — check browser console for this line
+        console.log("[EFRIS JS v2.1] refresh fired — docstatus=" + frm.doc.docstatus
+            + " efris_invoice_id=" + (frm.doc.efris_invoice_id || "(empty)")
+            + " efris_status=" + (frm.doc.efris_status || "(none)"));
         try {
             _efris_refresh(frm);
         } catch (e) {
-            console.error("EFRIS Sales Invoice refresh error (standard buttons are safe):", e);
+            console.error("[EFRIS JS v2.1] refresh error (standard buttons are safe):", e);
         }
     }
 
@@ -34,30 +38,35 @@ frappe.ui.form.on("Sales Invoice", {
 
 function _efris_refresh(frm) {
 
-    // Status badge — guard: efris_utils.js might not be built yet
+    // Status badge — guard: efris_utils.js needs bench build; may not be loaded yet
     if (typeof efris_add_status_badge === "function") {
-        efris_add_status_badge(frm);
+        try { efris_add_status_badge(frm); } catch (e) { console.warn("EFRIS badge error:", e); }
     }
 
-    // EFRIS buttons only make sense on submitted documents
-    if (frm.doc.docstatus !== 1) return;
+    // EFRIS buttons only make sense on submitted documents (docstatus === 1)
+    if (frm.doc.docstatus !== 1) {
+        console.log("[EFRIS JS v2.1] docstatus != 1 — no EFRIS buttons added");
+        return;
+    }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // PRIMARY ACTION — standalone button, NOT inside any group/dropdown
-    // This makes it immediately visible in the toolbar, same as SAP B1.
-    // ────────────────────────────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────────
+    // PRIMARY ACTION: Upload to EFRIS
+    // Show this whenever no URA invoice_id has been assigned yet.
+    // ──────────────────────────────────────────────────────────────────────────
     if (!frm.doc.efris_invoice_id) {
 
-        var is_return = !!frm.doc.is_return;
+        var is_return = (frm.doc.is_return === 1 || frm.doc.is_return === true);
         var btn_label = is_return
             ? __("Upload Credit Note to EFRIS")
             : __("Upload to EFRIS");
 
-        // No third argument → standalone button in toolbar (not in dropdown)
+        console.log("[EFRIS JS v2.1] adding standalone primary button: " + btn_label);
+
+        // Third argument intentionally omitted → standalone button (not in dropdown)
         var $primary = frm.add_custom_button(btn_label, function () {
             frappe.confirm(
-                __("Submit {0} to URA EFRIS?", [frm.doc.name]),
-                function () {
+                __("Submit this invoice to URA EFRIS?"),
+                function () {                         // on YES
                     if (is_return) {
                         _credit_note_dialog(frm);
                     } else {
@@ -65,13 +74,9 @@ function _efris_refresh(frm) {
                             method: "efris_integration.api.invoice.submit_sales_invoice",
                             args: { invoice_name: frm.doc.name },
                             freeze: true,
-                            freeze_message: __("Submitting to EFRIS..."),
+                            freeze_message: __("Submitting to EFRIS — please wait..."),
                             callback: function (r) {
                                 if (!r.exc) {
-                                    frappe.show_alert({
-                                        message: __("Invoice submitted to EFRIS successfully"),
-                                        indicator: "green"
-                                    });
                                     frm.reload_doc();
                                 }
                             }
@@ -81,26 +86,47 @@ function _efris_refresh(frm) {
             );
         });
 
-        // Make it a blue primary button
+        // Paint it blue so it stands out in the toolbar
         if ($primary && typeof $primary.addClass === "function") {
             $primary.addClass("btn-primary");
         }
 
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // SECONDARY ACTIONS — all inside the EFRIS dropdown group
-    // ────────────────────────────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────────
+    // SECONDARY ACTIONS — all inside the "EFRIS" dropdown group
+    // ──────────────────────────────────────────────────────────────────────────
 
-    // Shown only after invoice is already on EFRIS
-    if (frm.doc.efris_invoice_id) {
+    // "Refresh from EFRIS" — show when:
+    //   (a) invoice already has a URA invoice_id  (normal refresh / re-query)
+    //   (b) efris_status is "Pending"             (T108 returned no details — need T106)
+    var needs_refresh = frm.doc.efris_invoice_id
+        || frm.doc.efris_status === "Pending"
+        || frm.doc.efris_status === "Submitted";
+
+    if (needs_refresh) {
         frm.add_custom_button(__("Refresh from EFRIS"), function () {
             frappe.call({
-                method: "efris_integration.api.invoice.query_invoices",
-                args: { company: frm.doc.company, invoice_no: frm.doc.name },
+                method: "efris_integration.api.invoice.fetch_invoice_from_ura",
+                args: { invoice_name: frm.doc.name },
                 freeze: true,
+                freeze_message: __("Fetching invoice details from URA..."),
                 callback: function (r) {
-                    if (!r.exc) frm.reload_doc();
+                    if (!r.exc) {
+                        if (r.message && r.message.status === "not_found") {
+                            frappe.show_alert({
+                                message: r.message.message
+                                    || __("Invoice not yet visible on URA. Try again shortly."),
+                                indicator: "orange"
+                            });
+                        } else {
+                            frappe.show_alert({
+                                message: __("URA details fetched successfully"),
+                                indicator: "green"
+                            });
+                        }
+                        frm.reload_doc();
+                    }
                 }
             });
         }, __("EFRIS"));
@@ -119,7 +145,7 @@ function _efris_refresh(frm) {
             if (typeof efris_show_qr === "function") {
                 efris_show_qr(frm);
             } else {
-                frappe.msgprint(__("QR viewer not loaded. Run bench build."));
+                frappe.msgprint(__("QR viewer not loaded. Run: bench build --app efris_integration"));
             }
         }, __("EFRIS"));
     }
@@ -140,6 +166,8 @@ function _efris_refresh(frm) {
             });
         }
     }, __("EFRIS"));
+
+    console.log("[EFRIS JS v2.1] buttons rendered OK");
 }
 
 
@@ -176,14 +204,17 @@ function _credit_note_dialog(frm) {
                 method: "efris_integration.api.credit_note.submit_credit_note",
                 args: {
                     invoice_name: frm.doc.name,
-                    reason_code: values.reason_code,
-                    reason: values.reason || ""
+                    reason_code:  values.reason_code,
+                    reason:       values.reason || ""
                 },
                 freeze: true,
                 freeze_message: __("Submitting Credit Note to EFRIS..."),
                 callback: function (r) {
                     if (!r.exc) {
-                        frappe.show_alert({ message: __("Credit Note submitted to EFRIS"), indicator: "green" });
+                        frappe.show_alert({
+                            message: __("Credit Note submitted to EFRIS"),
+                            indicator: "green"
+                        });
                         frm.reload_doc();
                     }
                 }
