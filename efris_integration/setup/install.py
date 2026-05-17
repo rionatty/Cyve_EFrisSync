@@ -364,9 +364,9 @@ CUSTOM_FIELDS = {
          "insert_after": "company",         "collapsible": 0,
          "module": "EFRIS Integration"},
 
-        {"fieldname": "efris_ura_warehouse","fieldtype": "Data",          "label": "URA Warehouse",
+        {"fieldname": "efris_ura_warehouse","fieldtype": "Select",         "label": "URA Warehouse",
          "insert_after": "efris_section",
-         "description": "URA warehouse code that this ERPNext warehouse maps to.",
+         "options": "\nYes\nNo",
          "module": "EFRIS Integration"},
 
         {"fieldname": "efris_branch_id",    "fieldtype": "Data",          "label": "URA Branch Id",
