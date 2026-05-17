@@ -10,6 +10,7 @@ Pricing modes (controlled by EFRIS Settings):
   use_t127             → fetch live excise rates from URA T127 before submission
 """
 
+import json
 from datetime import datetime
 
 import frappe
@@ -451,8 +452,9 @@ def _build_goods_and_tax(
         item_fields = get_item_efris_fields(line.item_code)
         uom_code    = map_uom(line.uom, _company)
 
-        # Resolve URA tax rate from EFRIS Tax Mapping (account_head → ura_tax_code)
-        tax_rate, cat_code, cat_name, ura_rate_str = _resolve_line_tax(doc, line, _company)
+        # Resolve URA tax info + ERPNext-computed per-line tax amount
+        tax_rate, cat_code, cat_name, ura_rate_str, erp_tax_amount = \
+            _resolve_line_tax(doc, line, _company)
 
         # ── Amounts ─────────────────────────────────────────────────────────
         net_unit_price  = safe_float(line.rate)
@@ -460,8 +462,13 @@ def _build_goods_and_tax(
         net_amount      = safe_float(
             getattr(line, "net_amount", None) or line.amount
         )
-        # tax = net × rate (matches SAP: ItemTax = netUnitPrice * 0.18 * qty)
-        tax_amount       = round(net_amount * tax_rate / 100, 2)
+        # Prefer ERPNext's pre-computed per-line tax (from item_wise_tax_detail).
+        # Fall back to net × rate if ERPNext didn't store per-line detail.
+        if erp_tax_amount is not None:
+            tax_amount = round(erp_tax_amount, 2)
+        else:
+            tax_amount = round(net_amount * tax_rate / 100, 2)
+
         # URA always wants gross (VAT-inclusive) amounts in goodsDetails
         gross_unit_price = round(net_unit_price * (1 + tax_rate / 100), 4)
         gross_amount     = round(net_amount + tax_amount, 2)
@@ -576,35 +583,63 @@ def _pay_way(doc) -> list:
 
 def _resolve_line_tax(doc, line, company: str) -> tuple:
     """
-    Resolve URA tax info for a line by looking up the invoice's tax account
-    in EFRIS Tax Mapping (configured per-company in ERPNext).
+    Resolve URA tax info AND the ERPNext-computed tax amount for one line item.
 
-    Lookup order:
-      1. Find the first "On Net Total" tax row on the invoice → account_head
-      2. Look that account up in EFRIS Tax Mapping → ura_tax_code
-         ("18"  → Standard 18%   → taxRate "0.18",  category "01")
-         ("0"   → Zero-rated     → taxRate "0",     category "02")
-         ("-"   → Exempt         → taxRate "-",     category "03")
-      3. Fall back to 18% if no mapping row exists (same as SAP B1 default).
+    Lookup order for URA category:
+      1. Find the first "On Net Total" tax row on the invoice
+      2. Look its account_head up in EFRIS Tax Mapping → ura_tax_code
+            "18"  → Standard 18%  → taxRate "0.18", category "01"
+            "0"   → Zero-rated    → taxRate "0",    category "02"
+            "-"   → Exempt        → taxRate "-",    category "03"
+      3. Fall back to 18% if no mapping found
+
+    Per-line tax AMOUNT:
+      • Read from item_wise_tax_detail (ERPNext already computed it per line)
+        JSON format: {"ITEM-CODE": [rate%, amount], ...}
+      • Falls back to None (caller computes net × rate)
 
     Returns:
-        (tax_rate_float, cat_code, cat_name, ura_rate_str)
-        e.g. (18.0, "01", "Standard", "0.18")
+        (tax_rate_float, cat_code, cat_name, ura_rate_str, line_tax_amount_or_None)
     """
-    # Step 1 — get the tax account head from the invoice taxes table
-    tax_account = ""
     for tax in (doc.taxes or []):
-        if tax.charge_type == "On Net Total":
-            tax_account = tax.account_head or ""
-            break
+        if tax.charge_type != "On Net Total":
+            continue
 
-    # Step 2 — look it up in EFRIS Tax Mapping
-    ura_code = ""
-    if tax_account:
-        ura_code = map_tax_code(tax_account, company)   # "18", "0", or "-"
+        tax_account = (tax.account_head or "").strip()
 
-    # Step 3 — convert URA code to rate info
-    return _ura_code_to_rate(ura_code)
+        # ── URA category from EFRIS Tax Mapping ─────────────────────────────
+        ura_code = map_tax_code(tax_account, company) if tax_account else ""
+        tax_rate_f, cat_code, cat_name, ura_rate_str = _ura_code_to_rate(ura_code)
+
+        # ── Per-line amount from ERPNext item_wise_tax_detail ────────────────
+        # ERPNext stores {"item_code": [rate_pct, computed_tax_amount], ...}
+        line_tax_amount = None
+        raw_detail = getattr(tax, "item_wise_tax_detail", None) or ""
+        if raw_detail:
+            try:
+                detail = json.loads(raw_detail)
+                # Key can be item_code; fall back to item_name
+                for key in (line.item_code, getattr(line, "item_name", "")):
+                    if key and key in detail:
+                        row = detail[key]
+                        if isinstance(row, (list, tuple)) and len(row) >= 2:
+                            item_rate  = safe_float(row[0])
+                            line_tax_amount = safe_float(row[1])
+                            # If item has a different effective rate, override category
+                            if item_rate != tax_rate_f:
+                                tax_rate_f, cat_code, cat_name, ura_rate_str = \
+                                    _ura_code_to_rate(str(int(item_rate)) if item_rate > 0 else "0")
+                        break
+            except Exception as exc:
+                frappe.logger("efris").warning(
+                    f"[_resolve_line_tax] item_wise_tax_detail parse error "
+                    f"for {line.item_code}: {exc}"
+                )
+
+        return tax_rate_f, cat_code, cat_name, ura_rate_str, line_tax_amount
+
+    # No On Net Total tax row found — default to standard 18%
+    return 18.0, "01", "Standard", "0.18", None
 
 
 def _ura_code_to_rate(ura_code: str) -> tuple:
