@@ -367,7 +367,7 @@ def _basic_info(
 
     return {
         "invoiceId":           "",
-        "invoiceNo":           doc.name,
+        "invoiceNo":           "",     # must be empty on upload (modeCode=1); URA assigns this
         "antifakeCode":        "",
         "deviceNo":            settings.device_no,
         "issuedDate":          issued_date,
