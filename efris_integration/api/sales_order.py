@@ -103,7 +103,7 @@ def _post_t109(
         "extend":           {"reason": "", "reasonCode": ""},
     }
 
-    result = client.call("T109", payload, doc_type=doctype, doc_name=docname)
+    result = client.call("T109", payload, encrypt=True, sign=True, doc_type=doctype, doc_name=docname)
     _save_result(doc, result)
 
     frappe.msgprint(

@@ -123,7 +123,7 @@ def _post_t114(doc, doctype: str, docname: str) -> dict:
         },
     }
 
-    result = client.call("T114", payload, doc_type=doctype, doc_name=docname)
+    result = client.call("T114", payload, encrypt=True, sign=True, doc_type=doctype, doc_name=docname)
     _save_efris_result(doc, result)
     frappe.msgprint(f"Stock Receipt submitted to EFRIS. ID: {result.get('invoiceId','')}")
     return result
@@ -158,7 +158,7 @@ def _post_t114_purchase_receipt(doc) -> dict:
         },
     }
 
-    result = client.call("T114", payload, doc_type="Purchase Receipt", doc_name=doc.name)
+    result = client.call("T114", payload, encrypt=True, sign=True, doc_type="Purchase Receipt", doc_name=doc.name)
     _save_efris_result(doc, result)
     frappe.msgprint(f"Purchase Receipt submitted to EFRIS. ID: {result.get('invoiceId','')}")
     return result
@@ -206,7 +206,7 @@ def _post_t115(doc, settings, doctype: str, docname: str) -> dict:
         },
     }
 
-    result = client.call("T115", payload, doc_type=doctype, doc_name=docname)
+    result = client.call("T115", payload, encrypt=True, sign=True, doc_type=doctype, doc_name=docname)
     _save_efris_result(doc, result)
     frappe.msgprint(f"Stock Issue submitted to EFRIS. ID: {result.get('invoiceId','')}")
     return result
@@ -236,7 +236,7 @@ def _post_t115_manufacture_issue(doc, settings, doctype: str, docname: str) -> d
         },
     }
 
-    result = client.call("T115", payload, doc_type=doctype, doc_name=docname)
+    result = client.call("T115", payload, encrypt=True, sign=True, doc_type=doctype, doc_name=docname)
     _save_efris_result(doc, result)
     frappe.msgprint(f"Issue From Production submitted to EFRIS. ID: {result.get('invoiceId','')}")
     return result
@@ -286,7 +286,7 @@ def submit_goods_return(doctype: str, docname: str) -> dict:
         },
     }
 
-    result = client.call("T119", payload, doc_type=doctype, doc_name=docname)
+    result = client.call("T119", payload, encrypt=True, sign=True, doc_type=doctype, doc_name=docname)
     _save_efris_result(doc, result)
     frappe.msgprint(f"Goods Return submitted to EFRIS. ID: {result.get('invoiceId','')}")
     return result

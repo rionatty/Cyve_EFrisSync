@@ -69,7 +69,8 @@ def submit_sales_invoice(invoice_name: str) -> dict:
         "extend":         {"reason": "", "reasonCode": ""},
     }
 
-    result = client.call("T108", payload, doc_type="Sales Invoice", doc_name=invoice_name)
+    result = client.call("T108", payload, encrypt=True, sign=True,
+                         doc_type="Sales Invoice", doc_name=invoice_name)
 
     _save_result(doc, result)
     frappe.msgprint(
@@ -97,7 +98,8 @@ def query_invoices(
         "pageNo": str(page),
         "pageSize": "20",
     }
-    return client.call("T106", payload, doc_type="Sales Invoice", doc_name="Query")
+    return client.call("T106", payload, encrypt=True, sign=True,
+                       doc_type="Sales Invoice", doc_name="Query")
 
 
 # ─── Shared payload builders (also used by credit_note.py / sales_order.py) ──

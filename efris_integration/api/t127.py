@@ -41,7 +41,7 @@ def get_industry_config(company: str, force_refresh: bool = False) -> dict:
         return _T127_CACHE[cache_key]
 
     client = EFRISClient(company=company)
-    result = client.call("T127", doc_type="EFRIS Settings", doc_name=company)
+    result = client.call("T127", encrypt=True, sign=True, doc_type="EFRIS Settings", doc_name=company)
 
     _T127_CACHE[cache_key] = result
     return result

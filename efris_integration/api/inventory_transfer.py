@@ -61,7 +61,7 @@ def submit_inter_branch_transfer(stock_entry_name: str) -> dict:
         "summary": {"totalAmount": str(round(total, 2)), "itemCount": str(len(goods_details))},
         "branchId": source_branch.get("efris_branch_id", ""),
     }
-    t115_result = client.call("T115", t115_payload, doc_type="Stock Entry", doc_name=doc.name)
+    t115_result = client.call("T115", t115_payload, encrypt=True, sign=True, doc_type="Stock Entry", doc_name=doc.name)
 
     # ── T114: Receive at target branch ────────────────────────────────────
     t114_payload = {
@@ -79,7 +79,7 @@ def submit_inter_branch_transfer(stock_entry_name: str) -> dict:
         "summary": {"totalAmount": str(round(total, 2)), "itemCount": str(len(goods_details))},
         "branchId": target_branch.get("efris_branch_id", ""),
     }
-    t114_result = client.call("T114", t114_payload, doc_type="Stock Entry", doc_name=doc.name + "-IN")
+    t114_result = client.call("T114", t114_payload, encrypt=True, sign=True, doc_type="Stock Entry", doc_name=doc.name + "-IN")
 
     issue_id   = t115_result.get("invoiceId", "")
     receipt_id = t114_result.get("invoiceId", "")

@@ -93,7 +93,7 @@ def submit_credit_note(invoice_name: str, reason_code: str = "101", reason: str 
         "payWay": _pay_way(doc),
     }
 
-    result = client.call("T110", payload, doc_type="Sales Invoice", doc_name=invoice_name)
+    result = client.call("T110", payload, encrypt=True, sign=True, doc_type="Sales Invoice", doc_name=invoice_name)
 
     invoice_id = result.get("invoiceId") or result.get("referenceNo", "")
     antifake_code = result.get("antifakeCode", "")
@@ -117,4 +117,4 @@ def query_credit_notes(company: str, reference_no: str = "", from_date: str = ""
         "pageNo": str(page),
         "pageSize": "20",
     }
-    return client.call("T111", payload, doc_type="Sales Invoice", doc_name="CN Query")
+    return client.call("T111", payload, encrypt=True, sign=True, doc_type="Sales Invoice", doc_name="CN Query")
