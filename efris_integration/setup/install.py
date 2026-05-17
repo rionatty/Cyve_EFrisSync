@@ -24,16 +24,59 @@ from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 CUSTOM_FIELDS = {
 
     # ─── Sales Invoice (AR Invoice + Credit Note) ─────────────────────────
+    # Mirrors SAP B1: AR Invoice → EFRIS tab
+    #   QR Code | QR Path | Verification Code | FDN Number | Invoice ID | Remark
     "Sales Invoice": [
-        {"fieldname": "efris_section", "fieldtype": "Section Break", "label": "EFRIS / URA", "insert_after": "against_income_account", "collapsible": 1, "module": "EFRIS Integration"},
-        {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "EFRIS Invoice ID", "read_only": 1, "in_list_view": 0},
-        {"fieldname": "efris_antifake_code", "fieldtype": "Data", "label": "EFRIS Antifake Code", "read_only": 1},
-        {"fieldname": "efris_status", "fieldtype": "Select", "label": "EFRIS Status", "options": "\nPending\nSubmitted\nCredit Note Submitted\nFailed", "read_only": 1},
-        {"fieldname": "efris_submitted_at", "fieldtype": "Datetime", "label": "EFRIS Submitted At", "read_only": 1},
-        {"fieldname": "efris_qr_code", "fieldtype": "Attach Image", "label": "EFRIS QR Code", "read_only": 1},
-        {"fieldname": "efris_col_break", "fieldtype": "Column Break"},
-        {"fieldname": "efris_branch_id", "fieldtype": "Data", "label": "EFRIS Branch ID"},
-        {"fieldname": "efris_total_excise", "fieldtype": "Currency", "label": "Total Excise Duty", "read_only": 1},
+        # ── EFRIS Tab ─────────────────────────────────────────────────────
+        {"fieldname": "efris_tab",          "fieldtype": "Tab Break",   "label": "EFRIS",
+         "insert_after": "against_income_account", "module": "EFRIS Integration"},
+
+        # ── Left column ───────────────────────────────────────────────────
+        {"fieldname": "efris_col_left",     "fieldtype": "Section Break","label": "",
+         "insert_after": "efris_tab",       "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_qr_code",      "fieldtype": "Small Text",   "label": "QR Code",
+         "insert_after": "efris_col_left",  "read_only": 1,
+         "description": "URA EFRIS invoice validation URL",
+         "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_qr_path",      "fieldtype": "Data",         "label": "QR Path",
+         "insert_after": "efris_qr_code",   "read_only": 1,
+         "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_antifake_code","fieldtype": "Data",         "label": "Verification Code",
+         "insert_after": "efris_qr_path",   "read_only": 1,
+         "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_fdn_number",   "fieldtype": "Data",         "label": "FDN Number",
+         "insert_after": "efris_antifake_code", "read_only": 1,
+         "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_invoice_id",   "fieldtype": "Data",         "label": "Invoice ID",
+         "insert_after": "efris_fdn_number","read_only": 1,
+         "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_remark",       "fieldtype": "Small Text",   "label": "Remark",
+         "insert_after": "efris_invoice_id","read_only": 1,
+         "module": "EFRIS Integration"},
+
+        # ── Hidden legacy / internal fields ───────────────────────────────
+        {"fieldname": "efris_status",       "fieldtype": "Select",       "label": "EFRIS Status",
+         "insert_after": "efris_remark",
+         "options": "\nPending\nSubmitted\nCredit Note Submitted\nFailed",
+         "read_only": 1, "hidden": 1,      "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_submitted_at", "fieldtype": "Datetime",     "label": "EFRIS Submitted At",
+         "insert_after": "efris_status",    "read_only": 1, "hidden": 1,
+         "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_branch_id",    "fieldtype": "Data",         "label": "EFRIS Branch ID",
+         "insert_after": "efris_submitted_at", "hidden": 1,
+         "module": "EFRIS Integration"},
+
+        {"fieldname": "efris_total_excise", "fieldtype": "Currency",     "label": "Total Excise Duty",
+         "insert_after": "efris_branch_id", "read_only": 1, "hidden": 1,
+         "module": "EFRIS Integration"},
     ],
     "Sales Invoice Item": [
         {"fieldname": "efris_excise_tax", "fieldtype": "Currency", "label": "Excise Duty", "insert_after": "net_amount"},
@@ -397,6 +440,9 @@ def _remove_obsolete_fields():
     obsolete = [
         # Warehouse — efris_branch_code removed; replaced by efris_ura_warehouse
         ("Warehouse", "efris_branch_code"),
+        # Sales Invoice — old section/col breaks replaced by Tab Break
+        ("Sales Invoice", "efris_section"),
+        ("Sales Invoice", "efris_col_break"),
     ]
     for dt, fieldname in obsolete:
         cf_name = f"{dt}-{fieldname}"

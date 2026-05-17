@@ -327,14 +327,43 @@ def _tax_category_name(code: str) -> str:
 
 
 def _save_result(doc, result: dict):
-    invoice_id   = result.get("invoiceId", "")
-    antifake     = result.get("antifakeCode", "")
-    qr_code      = result.get("qrCode", "")
-    if not qr_code and antifake:
-        qr_code = generate_qr_code_b64(antifake)
+    """
+    Persist URA T108 response to the Sales Invoice EFRIS tab fields.
+
+    SAP B1 field mapping (ARInvoice.cs → SaveEFRISResult):
+      invoiceId      → Invoice ID       (efris_invoice_id)
+      antifakeCode   → Verification Code (efris_antifake_code)
+      invoiceNo      → FDN Number       (efris_fdn_number)
+      qrCode / URL   → QR Code          (efris_qr_code)  — validation URL
+      localPath      → QR Path          (efris_qr_path)
+      remark         → Remark           (efris_remark)
+    """
+    invoice_id  = result.get("invoiceId", "")
+    antifake    = result.get("antifakeCode", "")
+    fdn_number  = result.get("invoiceNo", "") or result.get("fdnNo", "")
+    remark      = result.get("remark", "") or result.get("returnMessage", "") or "SUCCESS"
+
+    # Build URA validation URL (shown in QR Code field, same as SAP B1)
+    qr_url = result.get("qrCode", "")
+    if not qr_url and antifake and fdn_number:
+        from efris_integration.utils.helpers import get_efris_settings
+        settings = get_efris_settings(doc.company)
+        base = "https://efristest.ura.go.ug" if settings.get("sandbox") else "https://efris.ura.go.ug"
+        qr_url = (
+            f"{base}/site_new/#/invoiceValidation"
+            f"?invoiceNo={fdn_number}&antiFakeCode={antifake}"
+        )
+    elif not qr_url and antifake:
+        qr_url = generate_qr_code_b64(antifake)
+
+    # QR Path — local file reference (SAP B1 saves a PNG file)
+    qr_path = result.get("qrPath", "") or result.get("localPath", "")
 
     doc.db_set("efris_invoice_id",    invoice_id,       update_modified=False)
     doc.db_set("efris_antifake_code", antifake,         update_modified=False)
-    doc.db_set("efris_qr_code",       qr_code,          update_modified=False)
-    doc.db_set("efris_status",        "Submitted",      update_modified=False)
-    doc.db_set("efris_submitted_at",  datetime.now(),   update_modified=False)
+    doc.db_set("efris_fdn_number",    fdn_number,       update_modified=False)
+    doc.db_set("efris_qr_code",       qr_url,           update_modified=False)
+    doc.db_set("efris_qr_path",       qr_path,          update_modified=False)
+    doc.db_set("efris_remark",        remark,            update_modified=False)
+    doc.db_set("efris_status",        "Submitted",       update_modified=False)
+    doc.db_set("efris_submitted_at",  datetime.now(),    update_modified=False)
