@@ -14,15 +14,14 @@
 frappe.ui.form.on("Warehouse", {
 
     refresh(frm) {
-        const $btn = frm.add_custom_button(__("Get Branch ID from URA"), () => {
-            efris_get_branch(frm);
-        });
-
-        if ($btn && $btn.length) {
-            $btn.removeClass("btn-default btn-secondary")
-                .addClass("btn-primary")
-                .css("font-weight", "600");
-        }
+        // set_secondary_action places the button in the page-head bar
+        // (same row as Save / Actions) — same slot used by Frappe's own
+        // Edit / Amend buttons and the Customer "Verify TIN" button.
+        frm.page.set_secondary_action(
+            __("Get Branch ID from URA"),
+            () => efris_get_branch(frm),
+            "fa fa-map-marker"
+        );
     },
 });
 
