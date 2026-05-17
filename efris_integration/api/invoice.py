@@ -502,7 +502,7 @@ def _build_goods_and_tax(
             "tax":               str(tax_amount),
             # remainAmount = total when no discount (SAP B1 requirement)
             "remainAmount":      str(gross_amount),
-            "orderNumber":       str(idx),            # T109 API: 1-based index
+            "orderNumber":       str(idx - 1),         # URA: must start from 0 (error 1219)
             "discountFlag":      discount_flag,        # "2" = no discount
             "deemedFlag":        "2",                  # "2" = not a deemed supply
             "vatApplicableFlag": vat_applicable,       # T109 API spec field
