@@ -73,67 +73,53 @@ def verify_tin(tin: str, company: str) -> dict:
     except Exception as exc:
         frappe.throw(str(exc), title="EFRIS Verify TIN Error")
 
-    # ── Unwrap list if URA returned an array ─────────────────────────────────
+    # ── Unwrap list wrapper if present ───────────────────────────────────────
     if isinstance(result, list) and result:
         result = result[0] if isinstance(result[0], dict) else {}
     if not isinstance(result, dict):
         result = {}
 
-    # ── Log raw keys so we can see exactly what URA returned ─────────────────
-    frappe.logger("efris").info(
-        f"T119 raw response keys for TIN {tin}: {list(result.keys())}\nFull: {result}"
+    # ── T119 response is nested: { "taxpayer": { "businessName": ..., ... } }
+    # Drill into the inner object; fall back to top-level for older versions.
+    taxpayer_obj = result.get("taxpayer") or result
+
+    # ── Parse fields from the inner taxpayer object ───────────────────────────
+    taxpayer_name = (
+        taxpayer_obj.get("businessName")
+        or taxpayer_obj.get("legalName")
+        or taxpayer_obj.get("tradeName")
+        or taxpayer_obj.get("shortName")
+        or taxpayer_obj.get("taxpayerName")
+        or taxpayer_obj.get("name")
+        or ""
     )
 
-    # ── Parse — try every known field name variant (URA changes these across ──
-    # EFRIS versions; SAP B1 T119ResponseMapper tries all of them too)
-    taxpayer_name = (
-        result.get("taxpayerName")
-        or result.get("TaxpayerName")
-        or result.get("taxPayerName")
-        or result.get("businessName")
-        or result.get("BusinessName")
-        or result.get("legalName")
-        or result.get("LegalName")
-        or result.get("tradeName")
-        or result.get("TradeName")
-        or result.get("shortName")
-        or result.get("ShortName")
-        or result.get("name")
-        or result.get("Name")
+    # taxpayerStatus is a code: "101" = Active, "102" = Cancelled
+    _status_code = (
+        taxpayer_obj.get("taxpayerStatus")
+        or taxpayer_obj.get("status")
         or ""
     )
-    status_desc = (
-        result.get("taxpayerStatus")
-        or result.get("TaxpayerStatus")
-        or result.get("taxPayerStatus")
-        or result.get("status")
-        or result.get("Status")
-        or result.get("statusDesc")
-        or result.get("registrationStatus")
-        or "Active"
-    )
-    # taxpayerType: INDIVIDUAL | COMPANY | GOVERNMENT | FOREIGN_NATIONAL
-    taxpayer_type = (
-        result.get("taxpayerType")
-        or result.get("TaxpayerType")
-        or result.get("taxPayerType")
-        or result.get("customerType")
-        or result.get("CustomerType")
-        or result.get("businessType")
+    status_desc = {"101": "Active", "102": "Cancelled"}.get(str(_status_code), _status_code or "Active")
+
+    # taxpayerType is a code: "101"=Individual, "201"=Private Company, "202"=Govt
+    _type_code = (
+        taxpayer_obj.get("taxpayerType")
+        or taxpayer_obj.get("customerType")
+        or taxpayer_obj.get("businessType")
         or ""
     )
-    returned_tin = (
-        result.get("tin")
-        or result.get("TIN")
-        or result.get("taxPayerTin")
-        or result.get("taxpayerTin")
-        or tin
-    )
+    taxpayer_type = {
+        "101": "INDIVIDUAL",
+        "201": "COMPANY",
+        "202": "GOVERNMENT",
+        "203": "FOREIGN_NATIONAL",
+    }.get(str(_type_code), str(_type_code))
+
+    returned_tin = taxpayer_obj.get("tin") or taxpayer_obj.get("TIN") or tin
 
     log_efris("Customer", tin, "T119", payload, result, "Success")
 
-    # Always return raw_fields so the UI can display them for debugging
-    # until we confirm which field names URA uses in this environment.
     return {
         "status":        "ok",
         "tin":           returned_tin,
@@ -141,5 +127,5 @@ def verify_tin(tin: str, company: str) -> dict:
         "taxpayer_type": taxpayer_type,
         "status_desc":   status_desc,
         "message":       f"TIN {returned_tin} verified — {taxpayer_name or '(name not returned)'}",
-        "raw_fields":    result,   # full decoded dict — shown in debug table
+        "raw_fields":    taxpayer_obj,   # inner taxpayer dict for debug display
     }
