@@ -376,6 +376,11 @@ CUSTOM_FIELDS = {
         {"fieldname": "efris_branch_name",  "fieldtype": "Data",          "label": "URA Branch Name",
          "insert_after": "efris_branch_id",
          "module": "EFRIS Integration"},
+
+        # Button field — renders inline inside the URA section
+        {"fieldname": "efris_get_branch_btn", "fieldtype": "Button", "label": "Get Branch ID from URA",
+         "insert_after": "efris_branch_name",
+         "module": "EFRIS Integration"},
     ],
 }
 

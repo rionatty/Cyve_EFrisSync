@@ -13,40 +13,11 @@
 
 frappe.ui.form.on("Warehouse", {
 
-    refresh(frm) {
-        // ERPNext's own warehouse.js runs AFTER this refresh and calls
-        // set_secondary_action for "Disable" / "Convert to Group", which
-        // overwrites anything we place there.
-        // Fix: defer our injection by 200 ms so we run last and the button
-        // sticks. We remove any stale instance first to prevent stacking.
-        setTimeout(() => _inject_branch_btn(frm), 200);
+    // Triggered by the Button-type custom field inside the URA section
+    efris_get_branch_btn(frm) {
+        efris_get_branch(frm);
     },
 });
-
-function _inject_branch_btn(frm) {
-    const CLASS = "efris-get-branch-btn";
-
-    // Clean up any button left by a previous refresh
-    $(frm.page.wrapper).find(`.${CLASS}`).remove();
-
-    const $btn = $("<button>")
-        .addClass(`btn btn-sm btn-primary ${CLASS}`)
-        .css({ "margin-right": "4px", "font-weight": "600" })
-        .text(__("Get Branch ID from URA"))
-        .on("click", () => efris_get_branch(frm));
-
-    // Insert before the green Save button (.primary-action)
-    const $save = $(frm.page.wrapper)
-        .find(".page-actions .primary-action, .page-actions .btn-primary")
-        .first();
-
-    if ($save.length) {
-        $save.before($btn);
-    } else {
-        // Fallback: prepend to the page-actions bar
-        $(frm.page.wrapper).find(".page-actions").prepend($btn);
-    }
-}
 
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
