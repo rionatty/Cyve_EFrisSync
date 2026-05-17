@@ -39,6 +39,7 @@ def submit_sales_invoice(invoice_name: str) -> dict:
         frappe.throw(f"Invoice already submitted to EFRIS (ID: {doc.efris_invoice_id}).")
 
     settings = get_efris_settings(doc.company)
+    _validate_settings(settings)          # friendly error before hitting URA
     client   = EFRISClient(company=doc.company)
 
     # T127 prefetch if enabled
@@ -272,6 +273,44 @@ def _extract_invoice_list(result: dict) -> list:
 
 
 # ─── Shared payload builders (also used by credit_note.py / sales_order.py) ──
+
+def _validate_settings(settings) -> None:
+    """
+    Check all required EFRIS Settings fields before hitting URA.
+    Throws a single user-friendly error listing every missing field
+    and a direct link to the settings page.
+
+    URA field requirements (error codes):
+      1115 — sellerDetails.emailAddress cannot be empty
+      1116 — sellerDetails.mobilePhone cannot be empty
+      1xxx — tin / device_no / legal_name also required
+    """
+    missing = []
+
+    if not (settings.tin or "").strip():
+        missing.append("TIN")
+    if not (settings.device_no or "").strip():
+        missing.append("Device No")
+    if not (settings.email or "").strip():
+        missing.append("Email Address")
+    if not (settings.phone or "").strip():
+        missing.append("Phone")
+    if not ((settings.legal_name or "") or (settings.company_name or "")).strip():
+        missing.append("Legal Name / Company Name")
+
+    if missing:
+        frappe.throw(
+            "The following required fields are missing in "
+            "<b>EFRIS Settings</b> for company <b>{company}</b>:<br><br>"
+            "<ul>{items}</ul>"
+            'Please go to <a href="/app/efris-settings" target="_blank">'
+            "EFRIS Settings</a> and fill them in before uploading.".format(
+                company=settings.company or "",
+                items="".join(f"<li>{f}</li>" for f in missing),
+            ),
+            title="EFRIS Settings Incomplete",
+        )
+
 
 def _seller_details(settings, doc) -> dict:
     branch_id = (
