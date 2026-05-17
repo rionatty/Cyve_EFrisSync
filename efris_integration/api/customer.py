@@ -73,58 +73,73 @@ def verify_tin(tin: str, company: str) -> dict:
     except Exception as exc:
         frappe.throw(str(exc), title="EFRIS Verify TIN Error")
 
-    # ── Parse response ────────────────────────────────────────────────────────
-    # URA returns taxpayer details in the decrypted response body.
-    # Field names vary by EFRIS version; try common variants.
+    # ── Unwrap list if URA returned an array ─────────────────────────────────
     if isinstance(result, list) and result:
         result = result[0] if isinstance(result[0], dict) else {}
+    if not isinstance(result, dict):
+        result = {}
 
-    # ── Parse response ────────────────────────────────────────────────────────
-    # URA returns taxpayer details in the decrypted body.
-    # Field names vary by EFRIS version; try all known variants (SAP B1 T119ResponseMapper).
+    # ── Log raw keys so we can see exactly what URA returned ─────────────────
+    frappe.logger("efris").info(
+        f"T119 raw response keys for TIN {tin}: {list(result.keys())}\nFull: {result}"
+    )
+
+    # ── Parse — try every known field name variant (URA changes these across ──
+    # EFRIS versions; SAP B1 T119ResponseMapper tries all of them too)
     taxpayer_name = (
         result.get("taxpayerName")
         or result.get("TaxpayerName")
+        or result.get("taxPayerName")
         or result.get("businessName")
         or result.get("BusinessName")
+        or result.get("legalName")
+        or result.get("LegalName")
+        or result.get("tradeName")
+        or result.get("TradeName")
+        or result.get("shortName")
+        or result.get("ShortName")
         or result.get("name")
+        or result.get("Name")
         or ""
     )
     status_desc = (
         result.get("taxpayerStatus")
         or result.get("TaxpayerStatus")
+        or result.get("taxPayerStatus")
         or result.get("status")
+        or result.get("Status")
         or result.get("statusDesc")
+        or result.get("registrationStatus")
         or "Active"
     )
     # taxpayerType: INDIVIDUAL | COMPANY | GOVERNMENT | FOREIGN_NATIONAL
-    # JS maps this to B2C / B2B / B2G / B2F respectively
     taxpayer_type = (
         result.get("taxpayerType")
         or result.get("TaxpayerType")
+        or result.get("taxPayerType")
         or result.get("customerType")
+        or result.get("CustomerType")
+        or result.get("businessType")
         or ""
     )
-    returned_tin = result.get("tin") or result.get("TIN") or tin
+    returned_tin = (
+        result.get("tin")
+        or result.get("TIN")
+        or result.get("taxPayerTin")
+        or result.get("taxpayerTin")
+        or tin
+    )
 
     log_efris("Customer", tin, "T119", payload, result, "Success")
 
-    if taxpayer_name or returned_tin:
-        return {
-            "status":        "ok",
-            "tin":           returned_tin,
-            "taxpayer_name": taxpayer_name,
-            "taxpayer_type": taxpayer_type,
-            "status_desc":   status_desc,
-            "message":       f"TIN {returned_tin} verified — {taxpayer_name}",
-        }
-
-    # Response came back but had no usable fields
+    # Always return raw_fields so the UI can display them for debugging
+    # until we confirm which field names URA uses in this environment.
     return {
         "status":        "ok",
-        "tin":           tin,
-        "taxpayer_name": "",
-        "taxpayer_type": "",
-        "status_desc":   "Verified",
-        "message":       "TIN verified with URA (no name returned).",
+        "tin":           returned_tin,
+        "taxpayer_name": taxpayer_name,
+        "taxpayer_type": taxpayer_type,
+        "status_desc":   status_desc,
+        "message":       f"TIN {returned_tin} verified — {taxpayer_name or '(name not returned)'}",
+        "raw_fields":    result,   # full decoded dict — shown in debug table
     }

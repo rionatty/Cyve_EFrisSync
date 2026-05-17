@@ -118,6 +118,19 @@ function _show_verified_dialog(frm, queried_tin, d) {
                      <td>${frappe.utils.escape_html(taxpayer_type)}
                          ${buyer_type ? `<i class="text-muted"> → ${buyer_type}</i>` : ""}</td></tr>`;
     }
+
+    // If name came back empty, show ALL raw fields URA returned so we can
+    // identify the correct field name and fix the parser.
+    const raw = d.raw_fields || {};
+    if (!taxpayer_name && Object.keys(raw).length) {
+        rows += `<tr><th colspan="2" class="text-muted" style="font-size:11px">
+                     Raw URA response fields (for diagnosis)</th></tr>`;
+        for (const [k, v] of Object.entries(raw)) {
+            rows += `<tr><td style="font-size:11px;color:#888">${frappe.utils.escape_html(k)}</td>
+                         <td style="font-size:11px">${frappe.utils.escape_html(String(v))}</td></tr>`;
+        }
+    }
+
     rows += `</table>`;
 
     let auto_fill_note = "";
