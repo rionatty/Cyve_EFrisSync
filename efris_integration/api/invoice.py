@@ -280,20 +280,21 @@ def _seller_details(settings, doc) -> dict:
         or ""
     )
     return {
-        "tin":             settings.tin,
-        "ninBrn":          settings.taxpayer_id,
-        "passportNumber":  "",
-        "legalName":       settings.legal_name or "",
-        "businessName":    settings.company_name or "",
-        "address":         settings.address or "",
-        "mobilePhone":     settings.phone or "",
-        "linePhone":       settings.phone or "",
-        "emailAddress":    settings.email or "",
-        "placeOfBusiness": settings.address or "",
-        "referenceNo":     doc.name,
-        "branchId":        branch_id,
-        "branchName":      settings.branch_name or "",
-        "branchCode":      settings.branch_code or "",
+        "tin":                  settings.tin,
+        "ninBrn":               settings.taxpayer_id,
+        "passportNumber":       "",
+        "legalName":            settings.legal_name or "",
+        "businessName":         settings.company_name or "",
+        "address":              settings.address or "",
+        "mobilePhone":          settings.phone or "",
+        "linePhone":            settings.phone or "",
+        "emailAddress":         settings.email or "",
+        "placeOfBusiness":      settings.address or "",
+        "referenceNo":          doc.name,
+        "branchId":             branch_id,
+        "branchName":           settings.branch_name or "",
+        "branchCode":           settings.branch_code or "",
+        "isCheckReferenceNo":   "0",   # T109 API spec: "0" = do not validate ref uniqueness
     }
 
 
@@ -322,20 +323,22 @@ def _buyer_details(doc, buyer: dict) -> dict:
     buyer_tin = "" if buyer_type_raw == "B2F" else safe_str(buyer.get("tax_id"))
 
     return {
-        "buyerTin":         buyer_tin,
-        "buyerNinBrn":      safe_str(buyer.get("efris_nin_brn")),
-        "buyerPassportNum": "",
-        "buyerLegalName":   doc.customer_name or "",
-        "buyerBusinessName":doc.customer_name or "",
-        "buyerAddress":     doc.address_display or "",
-        "buyerEmail":       safe_str(buyer.get("email_id")),
-        "buyerMobilePhone": safe_str(buyer.get("mobile_no")),
-        "buyerLinePhone":   safe_str(buyer.get("mobile_no")),
-        "buyerPlaceOfBusi": doc.address_display or "",
-        "buyerType":        ura_buyer_type,            # "0", "1", or "2"
-        "buyerCitizenship": safe_str(buyer.get("efris_citizenship")) or "Ugandan",
-        "buyerSector":      safe_str(buyer.get("efris_sector")) or "1",
-        "buyerReferenceNo": doc.get("po_no") or "",
+        "buyerTin":           buyer_tin,
+        "buyerNinBrn":        safe_str(buyer.get("efris_nin_brn")),
+        "buyerPassportNum":   "",
+        "buyerLegalName":     doc.customer_name or "",
+        "buyerBusinessName":  doc.customer_name or "",
+        "buyerAddress":       doc.address_display or "",
+        "buyerEmail":         safe_str(buyer.get("email_id")),
+        "buyerMobilePhone":   safe_str(buyer.get("mobile_no")),
+        "buyerLinePhone":     safe_str(buyer.get("mobile_no")),
+        "buyerPlaceOfBusi":   doc.address_display or "",
+        "buyerType":          ura_buyer_type,            # "0", "1", or "2"
+        "buyerCitizenship":   safe_str(buyer.get("efris_citizenship")) or "Ugandan",
+        "buyerSector":        safe_str(buyer.get("efris_sector")) or "1",
+        "buyerReferenceNo":   doc.get("po_no") or "",
+        "nonResidentFlag":    "0",    # T109 API spec: "0" = resident buyer
+        "deliveryTermsCode":  "",     # T109 API spec: delivery terms (empty = not specified)
     }
 
 
@@ -376,6 +379,7 @@ def _basic_info(
         "dataSource":          "103",          # 103=ERP system
         "invoiceIndustryCode": industry_code,
         "vatApplicableFlag":   "0",
+        "isBatch":             "0",            # T109 API spec: "0" = not a batch invoice
     }
 
 
@@ -441,6 +445,11 @@ def _build_goods_and_tax(
 
         # ── Goods item ──────────────────────────────────────────────────────
         goods_cat_id = item_fields.get("efris_goods_category_id") or "238"
+
+        # vatApplicableFlag: "1" = VAT applicable (18%), "0" = not applicable
+        # T109 API spec requires this on every goods line item
+        vat_applicable = "1" if tax_rate >= 17 else "0"
+
         good: dict = {
             "item":              line.item_name or line.item_code,
             "itemCode":          line.item_code,
@@ -453,9 +462,10 @@ def _build_goods_and_tax(
             "tax":               str(tax_amount),
             # remainAmount = total when no discount (SAP B1 requirement)
             "remainAmount":      str(gross_amount),
-            "orderNumber":       str(idx - 1),        # SAP B1 starts at 0
+            "orderNumber":       str(idx),            # T109 API: 1-based index
             "discountFlag":      discount_flag,        # "2" = no discount
-            "deemedFlag":        "2",
+            "deemedFlag":        "2",                  # "2" = not a deemed supply
+            "vatApplicableFlag": vat_applicable,       # T109 API spec field
             "categoryId":        goods_cat_id,
             "categoryName":      line.item_group or "",
             "goodsCategoryId":   goods_cat_id,
