@@ -329,6 +329,10 @@ def _tax_category_name(code: str) -> str:
 
 
 def _save_result(doc, result: dict):
+    """Persist URA T108 response to the Sales Invoice EFRIS tab fields."""
+    frappe.logger("efris").info(
+        f"T108 _save_result for {doc.name} — result keys: {list(result.keys())}\nFull: {result}"
+    )
     """
     Persist URA T108 response to the Sales Invoice EFRIS tab fields.
 
