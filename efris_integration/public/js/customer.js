@@ -1,42 +1,24 @@
 /**
- * EFRIS Customer form enhancements.
+ * EFRIS Customer form — Verify TIN + EFRIS-tab helpers.
  *
- * "Verify TIN" is added to the form toolbar (next to Save / Actions) via
- * frm.add_custom_button() — mirrors SAP B1: Business Partner → Verify TIN
- * button in the top action bar.
+ * "Verify TIN" is placed in the top-right page-action bar (same row as Save)
+ * using frm.page.set_secondary_action() — the Frappe API for adding a
+ * standalone button next to the primary Save button.
  *
- * On success the dialog auto-fills:
- *   • efris_invoice_name  ← taxpayer registered name
- *   • efris_business_type ← derived from taxpayer type (B2B / B2C / B2G / B2F)
- *   • efris_buyer_type    ← kept in sync with efris_business_type (legacy)
+ * Mirrors SAP B1: Business Partner → Verify TIN button in the top toolbar.
  */
 
 frappe.ui.form.on("Customer", {
 
-    // ── Inject "Verify TIN" directly into the page-header action bar ──────────
-    // frm.add_custom_button() targets the inner form toolbar (a different row).
-    // We instead insert a real <button> before frm.page.btn_primary (Save)
-    // so it appears in the same top bar as Create / View / Actions / Save.
+    // ── Top-right page-action button ─────────────────────────────────────────
     refresh(frm) {
-        // Prevent duplicates on repeated refresh calls
-        frm.page.wrapper.find(".efris-verify-tin-btn").remove();
-
-        const $btn = $("<button>")
-            .addClass("btn btn-primary btn-sm efris-verify-tin-btn")
-            .css({ "margin-right": "6px", "font-weight": "600" })
-            .text(__("Verify TIN"))
-            .on("click", function () {
-                efris_verify_tin(frm);
-            });
-
-        // Insert just before the Save button in the page header
-        const $save = frm.page.btn_primary;
-        if ($save && $save.length) {
-            $save.before($btn);
-        } else {
-            // Fallback: append to the .page-actions bar
-            frm.page.wrapper.find(".page-actions").prepend($btn);
-        }
+        // set_secondary_action places the button in the page head
+        // next to Save — same slot used by Frappe's own "Edit" / "Amend" buttons.
+        frm.page.set_secondary_action(
+            __("Verify TIN"),
+            () => efris_verify_tin(frm),
+            "fa fa-check-circle"          // icon (FontAwesome)
+        );
     },
 
     // ── Keep legacy efris_buyer_type in sync when Business Type changes ───────
@@ -50,9 +32,9 @@ frappe.ui.form.on("Customer", {
 //
 // SAP B1 flow (BusinessPartnerEfrisTabPage.cs → VerifyTin_Click):
 //   1. Read TIN from BP TaxID field
-//   2. Call T119 (Customer Information Query) with { "tin": "<TIN>" }
+//   2. POST T119  { "tin": "<TIN>" }
 //   3. Decrypt + parse taxpayerName, taxpayerStatus, taxpayerType
-//   4. Show result dialog; auto-fill BP Name / Taxpayer Name field on OK
+//   4. Show result dialog; auto-fill BP Name / Taxpayer Name on OK
 //   5. Map taxpayerType → buyerType (B2B / B2C / B2G / B2F)
 
 function efris_verify_tin(frm) {
@@ -67,7 +49,6 @@ function efris_verify_tin(frm) {
         return;
     }
 
-    // Resolve company — customer may not carry it directly; fall back to default
     const company = frm.doc.company
         || frappe.defaults.get_default("company")
         || "";
@@ -86,7 +67,7 @@ function efris_verify_tin(frm) {
     frappe.call({
         method:  "efris_integration.api.customer.verify_tin",
         args:    { tin, company },
-        freeze:  false,          // we manage freeze manually for better UX
+        freeze:  false,
         callback(r) {
             frappe.dom.unfreeze();
             if (r.exc) return;
@@ -99,7 +80,7 @@ function efris_verify_tin(frm) {
                 frappe.msgprint({
                     title:     __("TIN Not Found"),
                     message:   d.message
-                        || __("URA could not find a taxpayer registered for TIN <b>{0}</b>.", [tin]),
+                        || __("URA could not find a taxpayer for TIN <b>{0}</b>.", [tin]),
                     indicator: "red",
                 });
             }
@@ -111,21 +92,17 @@ function efris_verify_tin(frm) {
 }
 
 
-// ─── Result dialog — SAP B1 shows a modal with taxpayer details then offers ───
-// to auto-fill the BP Name / Invoice Name.  We do the same.
+// ─── Result dialog ────────────────────────────────────────────────────────────
 
 function _show_verified_dialog(frm, queried_tin, d) {
-    const returned_tin   = d.tin           || queried_tin;
-    const taxpayer_name  = d.taxpayer_name || "";
-    const status_desc    = d.status_desc   || "Active";
-    const taxpayer_type  = d.taxpayer_type || "";   // URA field: taxpayerType
+    const returned_tin  = d.tin           || queried_tin;
+    const taxpayer_name = d.taxpayer_name || "";
+    const status_desc   = d.status_desc   || "Active";
+    const taxpayer_type = d.taxpayer_type || "";
 
-    // Map URA taxpayerType → EFRIS business type (SAP B1 mapping table)
-    const buyer_type = _map_taxpayer_type(taxpayer_type);
+    const buyer_type        = _map_taxpayer_type(taxpayer_type);
+    const already_has_name  = !!(frm.doc.efris_invoice_name || "").trim();
 
-    const already_has_name = !!(frm.doc.efris_invoice_name || "").trim();
-
-    // Build detail rows
     let rows = `
         <table class="table table-bordered" style="margin-top:8px;font-size:13px">
           <tr><th style="width:38%">${__("TIN")}</th>
@@ -143,37 +120,26 @@ function _show_verified_dialog(frm, queried_tin, d) {
     }
     rows += `</table>`;
 
-    // Offer auto-fill actions (SAP B1 offers "Copy Name" checkbox on OK)
     let auto_fill_note = "";
     if (taxpayer_name) {
-        if (!already_has_name) {
-            auto_fill_note = `<div class="alert alert-info" style="margin-top:8px;font-size:12px">
-                <b>${__("Auto-fill")}</b>: Invoice Name will be set to
-                "<i>${frappe.utils.escape_html(taxpayer_name)}</i>"
-                ${buyer_type ? `and Business Type set to <b>${buyer_type}</b>` : ""}.
-            </div>`;
-        } else {
-            auto_fill_note = `<div class="alert alert-warning" style="margin-top:8px;font-size:12px">
-                ${__("Invoice Name already set — URA name not overwritten.")}
-            </div>`;
-        }
+        auto_fill_note = !already_has_name
+            ? `<div class="alert alert-info" style="margin-top:8px;font-size:12px">
+                 <b>${__("Auto-fill")}</b>: Invoice Name ← "<i>${frappe.utils.escape_html(taxpayer_name)}</i>"
+                 ${buyer_type ? ` &amp; Business Type ← <b>${buyer_type}</b>` : ""}.
+               </div>`
+            : `<div class="alert alert-warning" style="margin-top:8px;font-size:12px">
+                 ${__("Invoice Name already set — URA name not overwritten.")}
+               </div>`;
     }
 
     const dialog = new frappe.ui.Dialog({
         title:   __("TIN Verified ✓"),
-        fields: [
-            {
-                fieldtype: "HTML",
-                options:   rows + auto_fill_note,
-            },
-        ],
+        fields:  [{ fieldtype: "HTML", options: rows + auto_fill_note }],
         primary_action_label: __("OK"),
         primary_action() {
-            // Auto-fill Invoice Name (SAP B1: copies taxpayerName to BP Name field)
             if (taxpayer_name && !already_has_name) {
                 frm.set_value("efris_invoice_name", taxpayer_name);
             }
-            // Auto-fill Business Type if URA returned a taxpayer type
             if (buyer_type) {
                 frm.set_value("efris_business_type", buyer_type);
                 frm.set_value("efris_buyer_type",    buyer_type);
@@ -182,28 +148,20 @@ function _show_verified_dialog(frm, queried_tin, d) {
         },
     });
 
-    // Tint the dialog header green
     dialog.$wrapper.find(".modal-header").css("background", "#d4edda");
     dialog.show();
 }
 
 
-// ─── Map URA taxpayerType → EFRIS buyer-type code ────────────────────────────
-// SAP B1 mapping (T119ResponseMapper.cs):
-//   "INDIVIDUAL"        → B2C
-//   "COMPANY"           → B2B
-//   "GOVERNMENT"        → B2G
-//   "FOREIGN_NATIONAL"  → B2F
+// ─── taxpayerType → EFRIS buyer-type (SAP B1 T119ResponseMapper) ─────────────
 
 function _map_taxpayer_type(taxpayer_type) {
     if (!taxpayer_type) return "";
     const t = taxpayer_type.toUpperCase();
-    if (t.includes("GOVERNMENT"))           return "B2G";
-    if (t.includes("FOREIGN"))              return "B2F";
-    if (t.includes("COMPANY")
-        || t.includes("CORPORATE")
-        || t.includes("BUSINESS"))          return "B2B";
-    if (t.includes("INDIVIDUAL")
-        || t.includes("PERSON"))            return "B2C";
+    if (t.includes("GOVERNMENT"))                                    return "B2G";
+    if (t.includes("FOREIGN"))                                       return "B2F";
+    if (t.includes("COMPANY") || t.includes("CORPORATE")
+        || t.includes("BUSINESS"))                                   return "B2B";
+    if (t.includes("INDIVIDUAL") || t.includes("PERSON"))           return "B2C";
     return "";
 }
