@@ -450,8 +450,9 @@ def _save_result(doc, result: dict):
 
     validation_url = ""
     if antifake and fdn_number:
-        settings = get_efris_settings(doc.company)
-        sandbox  = bool(getattr(settings, "sandbox", None) or settings.get("sandbox"))
+        settings   = get_efris_settings(doc.company)
+        api_url    = getattr(settings, "api_url", "") or ""
+        sandbox    = "efristest" in api_url.lower()
         efris_host = "https://efristest.ura.go.ug" if sandbox else "https://efris.ura.go.ug"
         validation_url = (
             f"{efris_host}/efrisinvoice/#/invoiceValidation"
