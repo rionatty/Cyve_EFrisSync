@@ -19,6 +19,7 @@ doctype_js = {
     "Stock Reconciliation": "public/js/stock_reconciliation.js",
     "Item":               "public/js/item.js",
     "Customer":           "public/js/customer.js",
+    "Warehouse":          "public/js/warehouse.js",
     "EFRIS Settings":     "public/js/efris_settings.js",
 }
 
