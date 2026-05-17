@@ -1,61 +1,38 @@
 """
 Sales Invoice hooks — triggered on submit and cancel.
 
-Submit: auto-submit to EFRIS if EFRIS Settings are configured for the company.
-        Credit notes (is_return=1) go to T110; regular invoices go to T109.
-Cancel: EFRIS does not support cancellation; we only clear local EFRIS fields
-        and log a warning. The user must issue a credit note instead.
+Submit: does NOT auto-submit to EFRIS.
+        SAP B1 behaviour: the user manually clicks "Upload to EFRIS" on the
+        form.  Auto-submitting on every document submit causes silent failures,
+        sets efris_invoice_id unexpectedly, and hides the Upload button.
+
+Cancel: EFRIS does not support cancellation; warn the user to issue a Credit Note.
 """
 
 import frappe
-from efris_integration.utils.helpers import get_efris_settings
 
 
 def on_submit(doc, method):
-    try:
-        settings = get_efris_settings(doc.company)
-    except Exception:
-        return  # EFRIS not configured for this company — skip silently
+    """
+    Intentionally does NOT call EFRIS on submit.
 
-    if doc.is_return:
-        _submit_credit_note(doc)
-    else:
-        _submit_invoice(doc)
+    Reason: SAP B1 requires the user to explicitly click the Upload button.
+    Auto-submitting silently sets efris_invoice_id, changes the button to
+    "Refresh from EFRIS", and if it fails the user sees empty fields with
+    no clear way to retry.  The manual button in sales_invoice.js handles this.
+    """
+    pass   # nothing to do here — user clicks "Upload to EFRIS" manually
 
 
 def on_cancel(doc, method):
+    """Warn the user that EFRIS invoices cannot be cancelled — use Credit Note."""
     if doc.get("efris_invoice_id"):
         frappe.msgprint(
-            "Warning: This invoice was submitted to EFRIS. "
-            "EFRIS does not support cancellation — please issue a Credit Note instead.",
+            "⚠️  This invoice was already submitted to EFRIS "
+            "(Invoice ID: {0}).<br><br>"
+            "URA EFRIS does <b>not</b> support cancellation. "
+            "Please issue a <b>Credit Note</b> (Return) against this invoice "
+            "and upload it to EFRIS instead.".format(doc.efris_invoice_id),
+            title="EFRIS: Cannot Cancel",
             indicator="orange",
-            alert=True,
-        )
-
-
-# ─── Internal ────────────────────────────────────────────────────────────────
-
-def _submit_invoice(doc):
-    try:
-        from efris_integration.api.invoice import submit_sales_invoice
-        submit_sales_invoice(doc.name)
-    except Exception as e:
-        frappe.log_error(frappe.get_traceback(), f"EFRIS Invoice Submission Failed: {doc.name}")
-        frappe.msgprint(
-            f"EFRIS submission failed: {e}. You can retry manually from the invoice.",
-            indicator="red",
-            alert=True,
-        )
-
-
-def _submit_credit_note(doc):
-    try:
-        from efris_integration.api.credit_note import submit_credit_note
-        submit_credit_note(doc.name)
-    except Exception as e:
-        frappe.log_error(frappe.get_traceback(), f"EFRIS Credit Note Submission Failed: {doc.name}")
-        frappe.msgprint(
-            f"EFRIS credit note submission failed: {e}.",
-            indicator="red",
-            alert=True,
         )
