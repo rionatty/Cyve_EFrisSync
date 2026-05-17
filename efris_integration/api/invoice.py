@@ -20,7 +20,6 @@ from efris_integration.utils.helpers import (
     get_customer_efris_fields,
     get_efris_settings,
     get_item_efris_fields,
-    map_tax_code,
     map_uom,
     safe_float,
     safe_str,
@@ -53,20 +52,22 @@ def submit_sales_invoice(invoice_name: str) -> dict:
     buyer = get_customer_efris_fields(doc.customer)
     goods_details, tax_details, summary = _build_goods_and_tax(
         doc, settings,
-        use_gross=bool(settings.gross_on_ar_invoice),
-        use_price=bool(settings.price_on_ar_invoice),
         company=doc.company,
     )
 
+    # is_export: Customer EFRIS tab → Export field = "Y - Yes"
+    is_export = (buyer.get("efris_export") or "").startswith("Y")
+
     payload = {
-        "sellerDetails":  _seller_details(settings, doc),
-        "buyerDetails":   _buyer_details(doc, buyer),
-        "basicInformation": _basic_info(doc, settings, invoice_type="1"),
-        "goodsDetails":   goods_details,
-        "taxDetails":     tax_details,
-        "summary":        summary,
-        "payWay":         _pay_way(doc),
-        "extend":         {"reason": "", "reasonCode": ""},
+        "sellerDetails":    _seller_details(settings, doc),
+        "buyerDetails":     _buyer_details(doc, buyer),
+        "basicInformation": _basic_info(doc, settings, invoice_type="1",
+                                        is_export=is_export),
+        "goodsDetails":     goods_details,
+        "taxDetails":       tax_details,
+        "summary":          summary,
+        "payWay":           _pay_way(doc),
+        "extend":           {"reason": "", "reasonCode": ""},
     }
 
     result = client.call("T108", payload, encrypt=True, sign=True,
@@ -134,15 +135,29 @@ def _seller_details(settings, doc) -> dict:
 
 
 def _buyer_details(doc, buyer: dict) -> dict:
-    # efris_business_type is the new EFRIS-tab field (B2F/B2G/B2B/B2C).
-    # Fall back to legacy efris_buyer_type if the new field is not set.
-    buyer_type = (
+    """
+    Map ERPNext Customer EFRIS fields to URA buyerDetails object.
+
+    SAP B1 (ARInvoice.cs) buyerType mapping:
+      B2B / B2G → "0"   (business / government — Tax ID required)
+      B2C       → "1"   (individual consumer)
+      B2F       → "2"   (foreign / export — TIN must be empty)
+    """
+    buyer_type_raw = (
         buyer.get("efris_business_type")
         or buyer.get("efris_buyer_type")
         or "B2C"
-    )
+    ).strip().upper()
+
+    # URA numeric buyer type — mirrors SAP B1 CreateInvoice() BuyerType logic
+    _TYPE_MAP = {"B2B": "0", "B2G": "0", "B2C": "1", "B2F": "2"}
+    ura_buyer_type = _TYPE_MAP.get(buyer_type_raw, "1")
+
+    # B2F (foreign) buyers must have an empty TIN (SAP B1: VatId = "" when BType="B2F")
+    buyer_tin = "" if buyer_type_raw == "B2F" else safe_str(buyer.get("tax_id"))
+
     return {
-        "buyerTin":         safe_str(buyer.get("tax_id")),
+        "buyerTin":         buyer_tin,
         "buyerNinBrn":      safe_str(buyer.get("efris_nin_brn")),
         "buyerPassportNum": "",
         "buyerLegalName":   doc.customer_name or "",
@@ -152,9 +167,9 @@ def _buyer_details(doc, buyer: dict) -> dict:
         "buyerMobilePhone": safe_str(buyer.get("mobile_no")),
         "buyerLinePhone":   safe_str(buyer.get("mobile_no")),
         "buyerPlaceOfBusi": doc.address_display or "",
-        "buyerType":        buyer_type,
-        "buyerCitizenship": safe_str(buyer.get("efris_citizenship")),
-        "buyerSector":      safe_str(buyer.get("efris_sector")),
+        "buyerType":        ura_buyer_type,            # "0", "1", or "2"
+        "buyerCitizenship": safe_str(buyer.get("efris_citizenship")) or "Ugandan",
+        "buyerSector":      safe_str(buyer.get("efris_sector")) or "1",
         "buyerReferenceNo": doc.get("po_no") or "",
     }
 
@@ -164,12 +179,23 @@ def _basic_info(
     settings,
     invoice_type: str = "1",
     ori_invoice_id: str = "",
+    is_export: bool = False,
 ) -> dict:
+    """
+    Build basicInformation block.
+
+    SAP B1 (ARInvoice.cs):
+      invoiceIndustryCode = "101"  for domestic invoices
+      invoiceIndustryCode = "102"  when customer Export flag = "Y"
+    """
     posting = doc.posting_date
     if hasattr(posting, "strftime"):
         issued_date = posting.strftime("%Y-%m-%d %H:%M:%S")
     else:
         issued_date = str(posting) + " 00:00:00"
+
+    # "102" = export invoice; "101" = standard domestic invoice
+    industry_code = "102" if is_export else (settings.industry_code or "101")
 
     return {
         "invoiceId":           "",
@@ -180,10 +206,10 @@ def _basic_info(
         "operator":            frappe.session.user,
         "currency":            doc.currency or "UGX",
         "oriInvoiceId":        ori_invoice_id,
-        "invoiceType":         invoice_type,   # 1=normal, 2=credit note
-        "invoiceKind":         "1",            # 1=normal, 2=prepayment
+        "invoiceType":         invoice_type,   # "1"=normal, "2"=credit note
+        "invoiceKind":         "1",            # "1"=normal, "2"=prepayment
         "dataSource":          "103",          # 103=ERP system
-        "invoiceIndustryCode": settings.industry_code or "101",
+        "invoiceIndustryCode": industry_code,
         "vatApplicableFlag":   "0",
     }
 
@@ -191,104 +217,123 @@ def _basic_info(
 def _build_goods_and_tax(
     doc,
     settings,
-    use_gross: bool = False,
-    use_price: bool = True,
     company: str = "",
 ) -> tuple[list, list, dict]:
     """
-    Build goodsDetails, taxDetails, and summary arrays for any invoice-like doc.
+    Build goodsDetails, taxDetails, and summary for any invoice-like doc.
 
-    use_gross=True  → unitPrice and total are VAT-inclusive (gross)
-    use_price=False → unitPrice field sent as "0" (omit pricing)
+    Mirrors SAP B1 CreateInvoice() exactly:
+      • unitPrice / total    → always VAT-INCLUSIVE (gross)
+      • taxRate              → URA decimal string: "0.18", "0", "-"
+      • taxCategoryCode      → "01" (standard), "02" (zero), "03" (exempt)
+      • modeCode             → "1"
+      • discountFlag="2"     → no discountTotal / discountTaxRate keys sent
+      • remainAmount         → equals total when no discount
     """
     goods_details: list[dict] = []
-    tax_totals: dict[str, dict] = {}
+    # tax buckets keyed by URA category code ("01", "02", "03")
+    tax_buckets: dict[str, dict] = {}
     total_net   = 0.0
     total_tax   = 0.0
     total_gross = 0.0
 
     for idx, line in enumerate(doc.items, start=1):
-        _company     = company or doc.company or ""
-        item_fields  = get_item_efris_fields(line.item_code)
-        tax_rate     = _get_line_tax_rate(doc, line)
-        uom_code     = map_uom(line.uom, _company)
-        tax_cat_code = map_tax_code(_get_line_tax_account(doc, line), _company)
+        _company    = company or doc.company or ""
+        item_fields = get_item_efris_fields(line.item_code)
+        tax_rate    = _get_line_tax_rate(doc, line)   # float, e.g. 18.0
+        uom_code    = map_uom(line.uom, _company)
 
-        # Base amounts (net)
-        net_unit_price = safe_float(line.rate)
-        qty            = safe_float(line.qty)
-        net_amount     = safe_float(
+        # Resolve URA tax category for this line
+        cat_code, cat_name, ura_rate_str = _tax_bucket(tax_rate)
+
+        # ── Amounts ─────────────────────────────────────────────────────────
+        net_unit_price  = safe_float(line.rate)
+        qty             = safe_float(line.qty)
+        net_amount      = safe_float(
             getattr(line, "net_amount", None) or line.amount
         )
-        tax_amount     = round(net_amount * tax_rate / 100, 2)
-        gross_amount   = round(net_amount + tax_amount, 2)
+        # tax = net × rate (matches SAP: ItemTax = netUnitPrice * 0.18 * qty)
+        tax_amount       = round(net_amount * tax_rate / 100, 2)
+        # URA always wants gross (VAT-inclusive) amounts in goodsDetails
         gross_unit_price = round(net_unit_price * (1 + tax_rate / 100), 4)
+        gross_amount     = round(net_amount + tax_amount, 2)
 
         total_net   += net_amount
         total_tax   += tax_amount
         total_gross += gross_amount
 
-        # Excise calculation — uses T127 rates if enabled
+        # ── Excise (T127 rates if enabled) ──────────────────────────────────
         excise_data = compute_excise_for_line(
             line, item_fields, settings, doc.currency
         )
 
-        # Apply Gross / Price settings
-        reported_unit_price = gross_unit_price if use_gross else net_unit_price
-        reported_total      = gross_amount if use_gross else net_amount
+        # ── Discount ────────────────────────────────────────────────────────
+        # SAP B1: discountFlag="2" → discountTotal / discountTaxRate omitted
+        # discountFlag="1" → item carries discount; must be followed by flag="0" line
+        # For simplicity we use flag="2" (no explicit discount line) — the discount
+        # is already reflected in the net unit price ERPNext stores after applying it.
+        discount_flag = "2"
 
+        # ── Goods item ──────────────────────────────────────────────────────
+        goods_cat_id = item_fields.get("efris_goods_category_id") or "238"
         good: dict = {
             "item":              line.item_name or line.item_code,
             "itemCode":          line.item_code,
             "qty":               str(qty),
             "unitOfMeasure":     uom_code,
-            "unitPrice":         str(round(reported_unit_price, 4)) if use_price else "0",
-            "total":             str(round(reported_total, 2)),
-            "taxRate":           str(tax_rate),
+            # SAP B1: UnitPrice is always VAT-inclusive (gross)
+            "unitPrice":         str(gross_unit_price),
+            "total":             str(gross_amount),
+            "taxRate":           ura_rate_str,        # "0.18", "0", or "-"
             "tax":               str(tax_amount),
-            "discountTotal":     str(safe_float(getattr(line, "discount_amount", 0))),
-            "discountTaxRate":   "0",
-            "orderNumber":       str(idx),
-            "discountFlag":      "2",
+            # remainAmount = total when no discount (SAP B1 requirement)
+            "remainAmount":      str(gross_amount),
+            "orderNumber":       str(idx - 1),        # SAP B1 starts at 0
+            "discountFlag":      discount_flag,        # "2" = no discount
             "deemedFlag":        "2",
-            "categoryId":        item_fields.get("efris_goods_category_id") or "238",
+            "categoryId":        goods_cat_id,
             "categoryName":      line.item_group or "",
-            "goodsCategoryId":   item_fields.get("efris_goods_category_id") or "238",
+            "goodsCategoryId":   goods_cat_id,
             "goodsCategoryName": line.item_group or "",
             **excise_data,
         }
         goods_details.append(good)
 
-        # Aggregate per tax category
-        if tax_cat_code not in tax_totals:
-            tax_totals[tax_cat_code] = {
-                "net": 0.0, "tax": 0.0, "gross": 0.0, "rate": tax_rate
+        # ── Aggregate tax buckets ────────────────────────────────────────────
+        if cat_code not in tax_buckets:
+            tax_buckets[cat_code] = {
+                "net": 0.0, "tax": 0.0, "gross": 0.0,
+                "rate": ura_rate_str, "name": cat_name,
             }
-        tax_totals[tax_cat_code]["net"]   += net_amount
-        tax_totals[tax_cat_code]["tax"]   += tax_amount
-        tax_totals[tax_cat_code]["gross"] += gross_amount
+        tax_buckets[cat_code]["net"]   += net_amount
+        tax_buckets[cat_code]["tax"]   += tax_amount
+        tax_buckets[cat_code]["gross"] += gross_amount
 
+    # ── Tax details ─────────────────────────────────────────────────────────
+    # SAP B1 taxCategoryCode: "01"=Standard, "02"=Zero, "03"=Exempt
     tax_details = [
         {
-            "taxCategory":     _tax_category_name(code),
+            "taxCategory":     v["name"],
             "taxCategoryCode": code,
             "netAmount":       str(round(v["net"],   2)),
-            "taxRate":         str(v["rate"]),
+            "taxRate":         v["rate"],
             "taxAmount":       str(round(v["tax"],   2)),
             "grossAmount":     str(round(v["gross"], 2)),
             "exciseUnit":      "",
             "exciseCurrency":  "",
-            "taxRateName":     f"VAT {v['rate']}%",
+            "taxRateName":     _tax_rate_label(v["rate"]),
         }
-        for code, v in tax_totals.items()
+        for code, v in tax_buckets.items()
     ]
 
+    # ── Summary ─────────────────────────────────────────────────────────────
+    # SAP B1: modeCode = "1" for submitted invoices
     summary = {
         "netAmount":   str(round(total_net,   2)),
         "taxAmount":   str(round(total_tax,   2)),
         "grossAmount": str(round(total_gross, 2)),
         "itemCount":   str(len(goods_details)),
-        "modeCode":    "0",
+        "modeCode":    "1",
         "remarks":     doc.get("remarks") or "",
         "qrCode":      "",
     }
@@ -327,10 +372,33 @@ def _get_line_tax_account(doc, line) -> str:
     return ""
 
 
-def _tax_category_name(code: str) -> str:
-    return {"101": "Standard Rate", "102": "Zero Rate", "103": "Exempt"}.get(
-        code, "Standard Rate"
-    )
+def _tax_bucket(rate: float) -> tuple:
+    """
+    Convert a float VAT rate to (URA category code, category name, URA rate string).
+
+    SAP B1 ARInvoice.cs mapping:
+      TaxRate == "18"           → taxCategoryCode "01", taxRate "0.18", name "Standard"
+      TaxRate == "0"            → taxCategoryCode "02", taxRate "0",    name "Zero-rated"
+      TaxRate == "00" (scope)   → taxCategoryCode "11", taxRate "0",    name "F: VAT OUT OF SCOPE"
+      else (exempt)             → taxCategoryCode "03", taxRate "-",    name "Exempt"
+    """
+    if rate >= 17:      # 18 % standard
+        return "01", "Standard", "0.18"
+    elif rate == 0:     # zero-rated
+        return "02", "Zero-rated", "0"
+    else:               # exempt / not applicable
+        return "03", "Exempt", "-"
+
+
+def _tax_rate_label(ura_rate_str: str) -> str:
+    """Human-readable label for the URA taxRateName field."""
+    if ura_rate_str == "0.18":
+        return "VAT 18%"
+    elif ura_rate_str == "0":
+        return "VAT 0%"
+    elif ura_rate_str == "-":
+        return "Exempt"
+    return f"VAT {ura_rate_str}"
 
 
 def _save_result(doc, result: dict):

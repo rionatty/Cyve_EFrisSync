@@ -154,7 +154,8 @@ def get_customer_efris_fields(customer: str) -> dict:
             "efris_nin_brn",
             "efris_citizenship",
             "efris_sector",
-            "efris_export_flag",
+            "efris_export",          # "Y - Yes" / "N - No" → drives invoiceIndustryCode
+            "efris_export_flag",     # legacy boolean export flag
             "mobile_no",
             "email_id",
         ],
