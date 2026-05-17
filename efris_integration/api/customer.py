@@ -58,7 +58,7 @@ def verify_tin(tin: str, company: str) -> dict:
             "T119",
             payload=payload,
             encrypt=True,
-            sign=False,
+            sign=True,          # T119 requires RSA signing — same as T130/T131
             doc_type="Customer",
             doc_name=tin,
         )
