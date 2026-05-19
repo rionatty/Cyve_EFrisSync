@@ -41,7 +41,12 @@ from efris_integration.api.session import (
     refresh_session,
     handle_session_error,
 )
-from efris_integration.utils.helpers import efris_num, get_efris_settings, log_efris
+from efris_integration.utils.helpers import (
+    efris_num,
+    get_efris_settings,
+    log_efris,
+    resolve_branch_for_doc,
+)
 
 # ─── stockInType label → EFRIS code ──────────────────────────────────────────
 
@@ -97,8 +102,17 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
             title="Supplier Name Required",
         )
 
-    payload = _build_t131_payload(doc, company)
+    # ── Multi-branch: resolve URA Branch ID from the Stock Entry's warehouse ──
+    # Must run BEFORE _build_t131_payload() so settings.branch_id is already
+    # set to the warehouse branch when the payload header is built.
+    settings = get_efris_settings(company)
+    resolve_branch_for_doc(doc, settings)
+
+    payload = _build_t131_payload(doc, company, settings=settings)
     client  = EFRISClient(company=company)
+    # Sync resolved branch to client's own settings copy → correct globalInfo.brn
+    client.settings.branch_id   = settings.branch_id
+    client.settings.branch_name = settings.branch_name
 
     try:
         ensure_session(client, company)
@@ -180,7 +194,7 @@ def _call_t131(client: EFRISClient, payload: dict, doc_name: str) -> dict:
 
 # ─── Payload builder ──────────────────────────────────────────────────────────
 
-def _build_t131_payload(doc, company: str) -> dict:
+def _build_t131_payload(doc, company: str, settings=None) -> dict:
     """
     Build the complete T131 payload per EFRIS spec pages 172-175.
 
@@ -190,14 +204,19 @@ def _build_t131_payload(doc, company: str) -> dict:
       OIGN.U_SupplierTIN   → goodsStockIn.supplierTin
       OIGN.DocNum          → goodsStockIn.invoiceNo
       OIGN.DocDate         → goodsStockIn.stockInDate
-      Settings.BranchId    → goodsStockIn.branchId
+      Settings.BranchId    → goodsStockIn.branchId  (warehouse branch when multi-branch)
       IGN1.ItemCode        → goodsStockInItem.goodsCode
       IGN1.U_GoodsId       → goodsStockInItem.commodityGoodsId
       IGN1.UomCode         → goodsStockInItem.measureUnit
       IGN1.Quantity        → goodsStockInItem.quantity
       IGN1.Price           → goodsStockInItem.unitPrice
+
+    `settings` may be passed in already-resolved (branch mutated by
+    resolve_branch_for_doc) so the caller's branch resolution is honoured.
+    When None, settings are loaded fresh from the DB.
     """
-    settings = get_efris_settings(company)
+    if settings is None:
+        settings = get_efris_settings(company)
 
     stock_in_label = (doc.get("efris_stock_in_type") or "").strip()
     stock_in_code  = STOCK_IN_TYPE_MAP.get(stock_in_label, "102")
