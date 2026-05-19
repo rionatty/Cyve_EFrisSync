@@ -764,9 +764,9 @@ def _save_result(doc, result: dict):
     )
 
     # ── 3. Build the URA validation URL ──────────────────────────────────────
-    # URA returns qrCode inside summary; use it if present, otherwise construct
-    # the standard verification URL from antifakeCode + invoiceNo (FDN number).
-    # This mirrors how SAP B1 builds the verification link shown to the user.
+    # Correct URL format (confirmed from URA portal):
+    #   sandbox:    https://efristest.ura.go.ug/site_new/#/invoiceValidation?invoiceNo=...&antiFakeCode=...
+    #   production: https://efris.ura.go.ug/site_new/#/invoiceValidation?invoiceNo=...&antiFakeCode=...
     qr_raw = summary_resp.get("qrCode", "") or result.get("qrCode", "")
 
     validation_url = ""
@@ -776,7 +776,7 @@ def _save_result(doc, result: dict):
         sandbox    = "efristest" in api_url.lower()
         efris_host = "https://efristest.ura.go.ug" if sandbox else "https://efris.ura.go.ug"
         validation_url = (
-            f"{efris_host}/efrisinvoice/#/invoiceValidation"
+            f"{efris_host}/site_new/#/invoiceValidation"
             f"?invoiceNo={fdn_number}&antiFakeCode={antifake}"
         )
     elif qr_raw:
@@ -784,32 +784,22 @@ def _save_result(doc, result: dict):
     elif antifake:
         validation_url = antifake
 
-    # ── 4. Generate QR code PNG image (base64) ───────────────────────────────
-    # SAP B1 saves a PNG locally via localPath; we store it as a base64 data-URI
-    # so the "View QR Code" button can render it as <img> without any file I/O.
-    # Encode the validation URL — scanning it opens the URA invoice viewer.
-    qr_image_b64 = ""
-    encode_target = validation_url or qr_raw or antifake
-    if encode_target:
-        try:
-            qr_image_b64 = generate_qr_code_b64(encode_target)
-        except Exception as exc:
-            frappe.log_error(str(exc), f"EFRIS QR image generation failed [{doc.name}]")
-
-    # ── 5. Persist to EFRIS tab fields ───────────────────────────────────────
-    # Only update fields that we actually have data for
+    # ── 4. Persist to EFRIS tab fields ───────────────────────────────────────
+    # efris_qr_code  → the validation URL (human-readable; QR image generated on demand)
+    # efris_qr_path  → same URL (used by "Verify on URA" button and QR dialog)
+    # The "View QR Code" button in efris_utils.js calls get_qr_code_image() server-side
+    # to render a PNG on-the-fly from the URL — no need to persist the base64 blob.
     if invoice_id:
-        doc.db_set("efris_invoice_id",    invoice_id,    update_modified=False)
+        doc.db_set("efris_invoice_id",    invoice_id,     update_modified=False)
     if antifake:
-        doc.db_set("efris_antifake_code", antifake,      update_modified=False)
+        doc.db_set("efris_antifake_code", antifake,       update_modified=False)
     if fdn_number:
-        doc.db_set("efris_fdn_number",    fdn_number,    update_modified=False)
-    # efris_qr_code  → base64 PNG data-URI  (rendered as <img> in View QR dialog)
-    if qr_image_b64:
-        doc.db_set("efris_qr_code",       qr_image_b64,  update_modified=False)
-    # efris_qr_path  → URA verification URL (clickable link for manual validation)
+        doc.db_set("efris_fdn_number",    fdn_number,     update_modified=False)
     if validation_url:
-        doc.db_set("efris_qr_path",       validation_url, update_modified=False)
+        # Both fields get the URL — efris_qr_code shows it on the form,
+        # efris_qr_path drives the "Verify on URA" button
+        doc.db_set("efris_qr_code",  validation_url, update_modified=False)
+        doc.db_set("efris_qr_path",  validation_url, update_modified=False)
     doc.db_set("efris_remark",        remark,         update_modified=False)
     # Only mark "Submitted" when we have a real URA invoice_id — not just returnCode=00
     efris_status = "Submitted" if invoice_id else "Pending"
@@ -821,8 +811,8 @@ def _save_result(doc, result: dict):
 def get_qr_code_image(validation_url: str) -> str:
     """
     Generate a QR code PNG and return as a base64 data-URI.
-    Called by the View QR Code button when efris_qr_code is empty
-    (e.g. for invoices submitted before the QR generation fix).
+    Called by the "View QR Code" button in efris_utils.js.
+    efris_qr_code stores the URL; this converts it to a scannable image on demand.
     """
     if not validation_url:
         return ""
