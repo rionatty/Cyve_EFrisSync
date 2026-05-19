@@ -87,17 +87,31 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
         )
 
     # ── Duplicate submission guard ────────────────────────────────────────────
-    # Check both efris_invoice_id (URA doc number written on success) and
-    # efris_status so either field alone blocks a re-upload.
-    ura_ref     = (doc.get("efris_invoice_id") or "").strip()
-    efris_status = (doc.get("efris_status")    or "").strip()
-    if ura_ref or efris_status == "Submitted":
+    # IMPORTANT: efris_invoice_id and efris_status share the same fieldname
+    # on Sales Invoice and Stock Entry.  When ERPNext creates a Stock Entry
+    # from a Sales Invoice, the mapper copies matching custom fields — so a
+    # new Stock Entry can have efris_invoice_id/efris_status already set from
+    # the parent Sales Invoice before it has ever been submitted to T131.
+    #
+    # Therefore we use efris_ura_remark as the authoritative T131 indicator:
+    #   • It exists ONLY on Stock Entry (no matching field on Sales Invoice)
+    #   • It is only written by upload_stock_in() on success
+    #   • It is never copied from any parent document
+    #
+    # A successful T131 submission requires BOTH:
+    #   efris_ura_remark != ""   (T131 was actually called and responded)
+    #   efris_status == "Submitted"  (response was success, not failure)
+    t131_remark  = (doc.get("efris_ura_remark") or "").strip()
+    efris_status = (doc.get("efris_status")     or "").strip()
+    ura_ref      = (doc.get("efris_invoice_id") or "").strip()
+
+    if t131_remark and efris_status == "Submitted":
         frappe.throw(
             f"Stock Entry <b>{stock_entry_name}</b> has already been submitted "
-            f"to URA EFRIS.<br>"
+            f"to URA EFRIS (T131).<br>"
             + (f"URA Reference No: <b>{ura_ref}</b><br>" if ura_ref else "")
-            + "To re-submit, clear the <b>EFRIS Invoice ID</b> and set "
-            "<b>EFRIS Status</b> to blank on the URA tab first.",
+            + "To re-submit, clear the <b>URA Reference No</b>, "
+            "<b>EFRIS Status</b>, and <b>Remark</b> on the URA tab.",
             title="Already Submitted to EFRIS",
         )
 
