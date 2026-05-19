@@ -36,6 +36,7 @@ import frappe
 
 from efris_integration.api.base import EFRISClient, EFRISAPIError
 from efris_integration.utils.helpers import (
+    efris_num,
     get_efris_settings,
     get_item_efris_fields,
     get_supplier_efris_fields,
@@ -121,7 +122,7 @@ def _post_t114(doc, doctype: str, docname: str) -> dict:
         "issuedDate": str(doc.posting_date) + " 00:00:00",
         "goodsDetails": goods_details,
         "summary": {
-            "totalAmount": str(round(total, 2)),
+            "totalAmount": efris_num(total, decimal_places=2),
             "itemCount": str(len(goods_details)),
             "remarks": doc.get("remarks") or "",
         },
@@ -159,7 +160,7 @@ def _post_t114_purchase_receipt(doc) -> dict:
         "issuedDate": str(doc.posting_date) + " 00:00:00",
         "goodsDetails": goods_details,
         "summary": {
-            "totalAmount": str(round(total, 2)),
+            "totalAmount": efris_num(total, decimal_places=2),
             "itemCount": str(len(goods_details)),
             "remarks": "",
         },
@@ -210,7 +211,7 @@ def _post_t115(doc, settings, doctype: str, docname: str) -> dict:
         "issuedDate": str(doc.posting_date) + " 00:00:00",
         "goodsDetails": goods_details,
         "summary": {
-            "totalAmount": str(round(total, 2)),
+            "totalAmount": efris_num(total, decimal_places=2),
             "itemCount": str(len(goods_details)),
             "remarks": "",
         },
@@ -240,7 +241,7 @@ def _post_t115_manufacture_issue(doc, settings, doctype: str, docname: str) -> d
         "issuedDate": str(doc.posting_date) + " 00:00:00",
         "goodsDetails": goods_details,
         "summary": {
-            "totalAmount": str(round(total, 2)),
+            "totalAmount": efris_num(total, decimal_places=2),
             "itemCount": str(len(goods_details)),
             "remarks": "",
         },
@@ -294,7 +295,7 @@ def submit_goods_return(doctype: str, docname: str) -> dict:
         "issuedDate": str(doc.posting_date) + " 00:00:00",
         "goodsDetails": goods_details,
         "summary": {
-            "totalAmount": str(round(total, 2)),
+            "totalAmount": efris_num(total, decimal_places=2),
             "itemCount": str(len(goods_details)),
         },
     }
@@ -314,17 +315,22 @@ def _build_stock_goods(items, doc) -> list:
     goods = []
     for idx, line in enumerate(items, start=1):
         item_fields = get_item_efris_fields(line.item_code)
+        rate = safe_float(
+            line.basic_rate if hasattr(line, "basic_rate") else line.get("rate", 0)
+        )
         goods.append(
             {
-                "item": line.item_name or line.item_code,
-                "itemCode": line.item_code,
-                "qty": str(safe_float(line.qty)),
+                "item":          line.item_name or line.item_code,
+                "itemCode":      line.item_code,
+                # efris_num(): rounds to avoid URA [665] "decimal > 8 chars"
+                # str(float) / str(safe_float) can emit 13+ dp from ERPNext Decimal residue
+                "qty":           efris_num(line.qty,   decimal_places=6),
                 "unitOfMeasure": map_uom(line.uom, company),
-                "unitPrice": str(safe_float(line.basic_rate if hasattr(line, "basic_rate") else line.get("rate", 0))),
-                "total": str(safe_float(line.amount)),
-                "orderNumber": str(idx),
-                "categoryId": item_fields.get("efris_goods_category_id") or "238",
-                "categoryName": line.item_group or "",
+                "unitPrice":     efris_num(rate,        decimal_places=2),
+                "total":         efris_num(line.amount, decimal_places=2),
+                "orderNumber":   str(idx),
+                "categoryId":    item_fields.get("efris_goods_category_id") or "238",
+                "categoryName":  line.item_group or "",
             }
         )
     return goods

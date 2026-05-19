@@ -41,7 +41,7 @@ from efris_integration.api.session import (
     refresh_session,
     handle_session_error,
 )
-from efris_integration.utils.helpers import get_efris_settings, log_efris
+from efris_integration.utils.helpers import efris_num, get_efris_settings, log_efris
 
 # ─── stockInType label → EFRIS code ──────────────────────────────────────────
 
@@ -256,9 +256,12 @@ def _build_t131_payload(doc, company: str) -> dict:
             frappe.db.get_value("Item", row.item_code, "efris_reference_no") or ""
         ).strip()
 
-        uom_code  = _uom_code(row.uom or row.stock_uom or "", company)
-        qty       = str(float(row.qty          or 0))
-        unit_price = str(float(row.basic_rate  or row.valuation_rate or 0))
+        uom_code   = _uom_code(row.uom or row.stock_uom or "", company)
+        # efris_num(): rounds + strips trailing zeros to avoid URA error [665]
+        # "integer max 12 chars, decimal max 8 chars" — str(float) can produce
+        # 13+ dp from ERPNext Decimal field floating-point residue.
+        qty        = efris_num(row.qty or 0, decimal_places=6)
+        unit_price = efris_num(row.basic_rate or row.valuation_rate or 0, decimal_places=2)
 
         line: dict = {
             "goodsCode":   str(row.item_code),

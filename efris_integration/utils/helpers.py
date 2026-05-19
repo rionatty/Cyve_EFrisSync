@@ -310,3 +310,28 @@ def safe_float(value) -> float:
 
 def safe_str(value) -> str:
     return str(value) if value is not None else ""
+
+
+def efris_num(value, decimal_places: int = 2) -> str:
+    """
+    Format a numeric value as a clean decimal string for EFRIS payloads.
+
+    URA rule [665]: integer part max 12 digits, decimal part max 8 digits.
+    Python's str(float(...)) can emit full-precision strings such as
+    "770.4199999999999" (13 dp from floating-point residue in ERPNext
+    Decimal fields) which URA rejects outright.
+
+    This rounds to `decimal_places` (default 2 for prices / amounts) and
+    strips trailing zeros so the result is always compact and valid:
+        1000.0    → "1000"
+        770.42    → "770.42"
+        0.5       → "0.5"
+        2.500000  → "2.5"
+    """
+    try:
+        val = round(float(value or 0), decimal_places)
+    except (TypeError, ValueError):
+        val = 0.0
+    # Fixed-point then strip trailing zeros and any dangling decimal point
+    formatted = f"{val:.{decimal_places}f}".rstrip("0").rstrip(".")
+    return formatted or "0"
