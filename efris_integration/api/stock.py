@@ -40,6 +40,7 @@ from efris_integration.utils.helpers import (
     get_item_efris_fields,
     get_supplier_efris_fields,
     map_uom,
+    resolve_branch_for_doc,
     safe_float,
     safe_str,
 )
@@ -87,7 +88,10 @@ def submit_purchase_receipt(receipt_name: str) -> dict:
 def _post_t114(doc, doctype: str, docname: str) -> dict:
     """Build T114 payload for Stock Entry."""
     settings = get_efris_settings(doc.company)
+    resolve_branch_for_doc(doc, settings)   # multi-branch: use target warehouse branch
     client   = EFRISClient(company=doc.company)
+    client.settings.branch_id   = settings.branch_id
+    client.settings.branch_name = settings.branch_name
 
     stock_in_option = doc.get("efris_stock_in_option") or STOCK_IN_LOCAL
 
@@ -132,7 +136,10 @@ def _post_t114(doc, doctype: str, docname: str) -> dict:
 def _post_t114_purchase_receipt(doc) -> dict:
     """Build T114 payload for Purchase Receipt."""
     settings = get_efris_settings(doc.company)
+    resolve_branch_for_doc(doc, settings)   # multi-branch: use receiving warehouse branch
     client   = EFRISClient(company=doc.company)
+    client.settings.branch_id   = settings.branch_id
+    client.settings.branch_name = settings.branch_name
     supplier_fields = get_supplier_efris_fields(doc.supplier)
 
     stock_in_option = doc.get("efris_stock_in_option") or STOCK_IN_LOCAL
@@ -182,7 +189,10 @@ def submit_stock_issue(stock_entry_name: str) -> dict:
 
 
 def _post_t115(doc, settings, doctype: str, docname: str) -> dict:
+    resolve_branch_for_doc(doc, settings)   # multi-branch: use source warehouse branch
     client = EFRISClient(company=doc.company)
+    client.settings.branch_id   = settings.branch_id
+    client.settings.branch_name = settings.branch_name
     items = [i for i in doc.items if i.s_warehouse]
     goods_details = _build_stock_goods(items, doc)
     total = sum(safe_float(i.amount) for i in items)
@@ -261,7 +271,10 @@ def submit_goods_return(doctype: str, docname: str) -> dict:
         frappe.throw(f"Already submitted: {doc.efris_invoice_id}")
 
     settings = get_efris_settings(doc.company)
+    resolve_branch_for_doc(doc, settings)   # multi-branch: resolve from document warehouse
     client   = EFRISClient(company=doc.company)
+    client.settings.branch_id   = settings.branch_id
+    client.settings.branch_name = settings.branch_name
 
     items = doc.items
     goods_details = _build_stock_goods(items, doc)

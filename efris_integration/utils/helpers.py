@@ -176,6 +176,86 @@ def get_supplier_efris_fields(supplier: str) -> dict:
     ) or {}
 
 
+# ── Multi-branch: resolve URA branch from warehouse ──────────────────────────
+
+def resolve_branch_for_doc(doc, settings) -> tuple:
+    """
+    When "Enable Multi-Branch" is checked in EFRIS Settings, read the URA
+    Branch Id and Branch Name from the primary warehouse on the document and
+    overwrite settings.branch_id / settings.branch_name in-place so that both
+    globalInfo.brn and sellerDetails.branchId / branchName use the correct branch.
+
+    Warehouse priority:
+      1. doc.set_warehouse  (global warehouse set on the document header)
+      2. First non-empty line.warehouse  (first item line)
+      3. First non-empty line.s_warehouse  (Stock Entry source warehouse)
+      4. First non-empty line.t_warehouse  (Stock Entry target warehouse)
+
+    Raises a user-friendly error if multi-branch is enabled but the resolved
+    warehouse has no URA Branch Id configured.
+
+    Returns:
+        (branch_id, branch_name) — the resolved values (same as settings.branch_id
+        after the call) so callers can sync to a second client.settings copy.
+    """
+    if not getattr(settings, "multi_branch", False):
+        # Single-branch mode — use settings as-is, nothing to do
+        return (settings.branch_id or "", settings.branch_name or "")
+
+    # ── Find the primary warehouse ────────────────────────────────────────
+    warehouse = (getattr(doc, "set_warehouse", "") or "").strip()
+
+    if not warehouse:
+        for line in (getattr(doc, "items", None) or []):
+            for attr in ("warehouse", "s_warehouse", "t_warehouse"):
+                w = (getattr(line, attr, "") or "").strip()
+                if w:
+                    warehouse = w
+                    break
+            if warehouse:
+                break
+
+    if not warehouse:
+        frappe.log_error(
+            f"EFRIS multi-branch is enabled but no warehouse found on "
+            f"{doc.doctype} {doc.name}. Falling back to default branch "
+            f"from EFRIS Settings.",
+            "EFRIS Multi-Branch — No Warehouse",
+        )
+        return (settings.branch_id or "", settings.branch_name or "")
+
+    # ── Look up URA branch fields on the Warehouse ────────────────────────
+    wh_data = frappe.db.get_value(
+        "Warehouse",
+        warehouse,
+        ["efris_branch_id", "efris_branch_name"],
+        as_dict=True,
+    ) or {}
+
+    wh_branch_id   = (wh_data.get("efris_branch_id")   or "").strip()
+    wh_branch_name = (wh_data.get("efris_branch_name") or "").strip()
+
+    if not wh_branch_id:
+        frappe.throw(
+            f"<b>EFRIS Multi-Branch</b> is enabled but warehouse "
+            f"<b>{warehouse}</b> has no <b>URA Branch Id</b> configured.<br><br>"
+            f"Go to <b>Warehouse → {warehouse} → URA</b> section and set "
+            f"the <b>URA Branch Id</b> (assigned by URA for this branch).",
+            title="EFRIS Branch ID Missing on Warehouse",
+        )
+
+    # ── Mutate settings in-place so all downstream callers see the branch ─
+    settings.branch_id   = wh_branch_id
+    settings.branch_name = wh_branch_name or settings.branch_name
+
+    frappe.logger("efris").info(
+        f"EFRIS multi-branch: resolved branch for {doc.doctype} {doc.name} "
+        f"→ warehouse='{warehouse}' branch_id='{wh_branch_id}'"
+    )
+
+    return (wh_branch_id, wh_branch_name)
+
+
 # ── QR code generator ─────────────────────────────────────────────────────────
 
 def generate_qr_code_b64(data: str) -> str:

@@ -20,7 +20,11 @@ from efris_integration.api.invoice import (
     _pay_way,
     _seller_details,
 )
-from efris_integration.utils.helpers import get_customer_efris_fields, get_efris_settings
+from efris_integration.utils.helpers import (
+    get_customer_efris_fields,
+    get_efris_settings,
+    resolve_branch_for_doc,
+)
 
 
 CREDIT_REASON_CODES = {
@@ -61,7 +65,11 @@ def submit_credit_note(invoice_name: str, reason_code: str = "101", reason: str 
 
     ori_invoice_no = return_against
     settings = get_efris_settings(doc.company)
-    client   = EFRISClient(company=doc.company)
+    resolve_branch_for_doc(doc, settings)   # multi-branch: resolve from warehouse
+
+    client = EFRISClient(company=doc.company)
+    client.settings.branch_id   = settings.branch_id
+    client.settings.branch_name = settings.branch_name
 
     buyer = get_customer_efris_fields(doc.customer)
     goods_details, tax_details, summary = _build_goods_and_tax(

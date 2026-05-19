@@ -24,6 +24,7 @@ from efris_integration.utils.helpers import (
     get_item_efris_fields,
     map_tax_code,
     map_uom,
+    resolve_branch_for_doc,
     safe_float,
     safe_str,
 )
@@ -43,7 +44,21 @@ def submit_sales_invoice(invoice_name: str) -> dict:
 
     settings = get_efris_settings(doc.company)
     _validate_settings(settings)          # friendly error before hitting URA
-    client   = EFRISClient(company=doc.company)
+
+    # ── Multi-branch: resolve URA Branch ID from the invoice's warehouse ──
+    # When "Enable Multi-Branch" is checked in EFRIS Settings, the branch ID
+    # is taken from the Warehouse master (URA section → URA Branch Id) rather
+    # than from the global EFRIS Settings branch fields.
+    # resolve_branch_for_doc() mutates settings.branch_id / branch_name so
+    # that _seller_details() picks up the correct branch automatically.
+    resolve_branch_for_doc(doc, settings)
+
+    client = EFRISClient(company=doc.company)
+
+    # Sync the resolved branch into the client's own settings copy so
+    # make_global_info() sends the correct globalInfo.brn for this invoice.
+    client.settings.branch_id   = settings.branch_id
+    client.settings.branch_name = settings.branch_name
 
     # T127 prefetch if enabled
     if settings.use_t127:
@@ -316,9 +331,14 @@ def _validate_settings(settings) -> None:
 
 
 def _seller_details(settings, doc) -> dict:
+    # Branch ID priority:
+    #   1. settings.branch_id  — already overwritten by resolve_branch_for_doc()
+    #      when multi_branch is enabled (contains the warehouse's URA Branch Id)
+    #   2. doc.efris_branch_id — legacy fallback (manually set hidden field)
+    #   3. Empty string
     branch_id = (
-        doc.get("efris_branch_id")
-        or settings.branch_id
+        settings.branch_id
+        or doc.get("efris_branch_id")
         or ""
     )
     return {

@@ -21,7 +21,11 @@ from efris_integration.api.invoice import (
     _seller_details,
     _save_result,
 )
-from efris_integration.utils.helpers import get_customer_efris_fields, get_efris_settings
+from efris_integration.utils.helpers import (
+    get_customer_efris_fields,
+    get_efris_settings,
+    resolve_branch_for_doc,
+)
 
 
 # ─── Sales Order → T109 ───────────────────────────────────────────────────
@@ -72,7 +76,10 @@ def _post_t109(
     use_gross: bool,
     use_price: bool,
 ) -> dict:
+    resolve_branch_for_doc(doc, settings)   # multi-branch: resolve from warehouse
     client = EFRISClient(company=doc.company)
+    client.settings.branch_id   = settings.branch_id
+    client.settings.branch_name = settings.branch_name
     buyer  = get_customer_efris_fields(doc.customer)
     goods_details, tax_details, summary = _build_goods_and_tax(
         doc, settings,
