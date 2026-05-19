@@ -63,7 +63,8 @@
     "issue_from_production",
     "receipt_from_production",
     "col_sett3",
-    "alcohol_industry"
+    "alcohol_industry",
+    "has_local_excise_duty"
   ],
 
   "fields": [
@@ -240,7 +241,13 @@
     { "fieldname": "issue_from_production",   "fieldtype": "Check", "label": "Issue From Production" },
     { "fieldname": "receipt_from_production", "fieldtype": "Check", "label": "Receipt From Production" },
     { "fieldname": "col_sett3", "fieldtype": "Column Break" },
-    { "fieldname": "alcohol_industry",        "fieldtype": "Check", "label": "Alcohol Industry" }
+    { "fieldname": "alcohol_industry",        "fieldtype": "Check", "label": "Alcohol Industry" },
+    {
+      "fieldname": "has_local_excise_duty",
+      "fieldtype": "Check",
+      "label": "Registered for Local Excise Duty",
+      "description": "Enable ONLY if URA has registered this taxpayer for Local Excise Duty. When unchecked, haveExciseTax is forced to '102' on all item uploads (prevents EFRIS error [681])."
+    }
 
   ],
 

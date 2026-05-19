@@ -255,6 +255,8 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
     Build the T130 / T131 JSON payload from Item fields.
     Mirrors ItemMaster.cs field mapping exactly.
     """
+    from efris_integration.utils.helpers import get_efris_settings
+
     uom_code = _get_efris_uom(item.stock_uom, company)
 
     def yn(val):
@@ -270,7 +272,25 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
     # All numeric fields are sent as strings per EFRIS T130 spec.
     # currency: T115 currencyType code — UGX = "101"
     have_piece = yn(item.get("efris_have_piece_unit"))
-    have_excise = yn(item.get("efris_have_excise_tax"))
+
+    # ── Excise duty guard (EFRIS rule [681]) ──────────────────────────────────
+    # haveExciseTax must be "102" unless the taxpayer is registered for Local
+    # Excise Duty with URA.  The "Registered for Local Excise Duty" checkbox in
+    # EFRIS Settings is the authoritative switch.  When it is not enabled we
+    # silently override the item flag so uploads never fail with [681].
+    settings = get_efris_settings(company)
+    registered_for_excise = bool(getattr(settings, "has_local_excise_duty", False))
+
+    item_wants_excise = yn(item.get("efris_have_excise_tax")) == "101"
+    if item_wants_excise and not registered_for_excise:
+        frappe.logger("efris").warning(
+            f"T130: item '{item.name}' has efris_have_excise_tax=Yes but "
+            f"EFRIS Settings for '{company}' has 'Registered for Local Excise Duty' "
+            f"unchecked.  Sending haveExciseTax='102' to avoid URA error [681]. "
+            f"Enable the setting if this taxpayer is actually registered for excise duty."
+        )
+
+    have_excise = "101" if (item_wants_excise and registered_for_excise) else "102"
 
     # pieceMeasureUnit also goes through the same UOM mapper (max 3 chars enforced)
     piece_uom_raw = str(item.get("efris_piece_uom") or "")
