@@ -480,7 +480,12 @@ def _build_goods_and_tax(
         else:
             tax_amount  = 0.0
 
-        total_net   += net_amount
+        # Derive net from gross so buckets stay self-consistent:
+        #   net = gross - tax  (both already trunc'd to 2dp)
+        # Using ERPNext net_amount for bucket accumulation causes net+tax ≠ gross
+        # across multi-line invoices due to independent truncation (URA error 1342).
+        line_net     = round(gross_amount - tax_amount, 2)
+        total_net   += line_net
         total_tax   += tax_amount
         total_gross += gross_amount
 
@@ -534,33 +539,40 @@ def _build_goods_and_tax(
                 "net": 0.0, "tax": 0.0, "gross": 0.0,
                 "rate": ura_rate_str, "name": cat_name,
             }
-        tax_buckets[cat_code]["net"]   += net_amount
+        tax_buckets[cat_code]["net"]   += line_net      # gross - tax (self-consistent)
         tax_buckets[cat_code]["tax"]   += tax_amount
         tax_buckets[cat_code]["gross"] += gross_amount
 
     # ── Tax details ─────────────────────────────────────────────────────────
-    # SAP B1 taxCategoryCode: "01"=Standard, "02"=Zero, "03"=Exempt
-    tax_details = [
-        {
+    # URA rule [1342]: netAmount + taxAmount MUST equal grossAmount exactly.
+    # We derive grossAmount = net + tax (never sum independently) so it holds
+    # even when individual line truncations produce sub-cent gaps.
+    tax_details = []
+    for code, v in tax_buckets.items():
+        t_net   = round(v["net"],  2)
+        t_tax   = round(v["tax"],  2)
+        t_gross = round(t_net + t_tax, 2)   # derived — guarantees constraint
+        tax_details.append({
             "taxCategory":     v["name"],
             "taxCategoryCode": code,
-            "netAmount":       str(round(v["net"],   2)),
+            "netAmount":       str(t_net),
             "taxRate":         v["rate"],
-            "taxAmount":       str(round(v["tax"],   2)),
-            "grossAmount":     str(round(v["gross"], 2)),
+            "taxAmount":       str(t_tax),
+            "grossAmount":     str(t_gross),  # = netAmount + taxAmount  ✓
             "exciseUnit":      "",
             "exciseCurrency":  "",
             "taxRateName":     _tax_rate_label(v["rate"]),
-        }
-        for code, v in tax_buckets.items()
-    ]
+        })
 
     # ── Summary ─────────────────────────────────────────────────────────────
-    # SAP B1: modeCode = "1" for submitted invoices
+    # Same consistency rule: grossAmount = netAmount + taxAmount.
+    s_net   = round(total_net,  2)
+    s_tax   = round(total_tax,  2)
+    s_gross = round(s_net + s_tax, 2)   # derived — never independently summed
     summary = {
-        "netAmount":   str(round(total_net,   2)),
-        "taxAmount":   str(round(total_tax,   2)),
-        "grossAmount": str(round(total_gross, 2)),
+        "netAmount":   str(s_net),
+        "taxAmount":   str(s_tax),
+        "grossAmount": str(s_gross),
         "itemCount":   str(len(goods_details)),
         "modeCode":    "1",
         "remarks":     doc.get("remarks") or "",
