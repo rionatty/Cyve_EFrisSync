@@ -45,6 +45,7 @@ from efris_integration.utils.helpers import (
     efris_num,
     get_efris_settings,
     log_efris,
+    now_str,
     resolve_branch_for_doc,
 )
 
@@ -83,6 +84,21 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
         frappe.throw(
             "Stock Entry must be submitted before uploading to EFRIS.",
             title="Not Submitted",
+        )
+
+    # ── Duplicate submission guard ────────────────────────────────────────────
+    # Check both efris_invoice_id (URA doc number written on success) and
+    # efris_status so either field alone blocks a re-upload.
+    ura_ref     = (doc.get("efris_invoice_id") or "").strip()
+    efris_status = (doc.get("efris_status")    or "").strip()
+    if ura_ref or efris_status == "Submitted":
+        frappe.throw(
+            f"Stock Entry <b>{stock_entry_name}</b> has already been submitted "
+            f"to URA EFRIS.<br>"
+            + (f"URA Reference No: <b>{ura_ref}</b><br>" if ura_ref else "")
+            + "To re-submit, clear the <b>EFRIS Invoice ID</b> and set "
+            "<b>EFRIS Status</b> to blank on the URA tab first.",
+            title="Already Submitted to EFRIS",
         )
 
     # ── Validate required URA fields ──────────────────────────────────────────
@@ -152,14 +168,21 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
         except EFRISAPIError as exc2:
             handle_session_error("T131", company, exc2, "Stock Entry", stock_entry_name)
 
-    # ── Success: write URA response remark back to Stock Entry ────────────────
+    # ── Success: persist URA response to Stock Entry ─────────────────────────
+    ura_doc_id = _extract_ura_doc_id(result)   # URA-assigned T131 document number
     ura_remark = _extract_remark(result)
 
-    frappe.db.set_value(
-        "Stock Entry", stock_entry_name,
-        {"efris_ura_remark": ura_remark or "Stock In Submitted Successfully to URA EFRIS."},
-        update_modified=False,
-    )
+    updates = {
+        "efris_status":      "Submitted",
+        "efris_submitted_at": now_str(),
+        "efris_ura_remark":  ura_remark or "Stock In Submitted Successfully to URA EFRIS.",
+    }
+    if ura_doc_id:
+        # Store the URA document reference number so the duplicate guard works
+        # and the user can cross-reference in the URA portal.
+        updates["efris_invoice_id"] = ura_doc_id
+
+    frappe.db.set_value("Stock Entry", stock_entry_name, updates, update_modified=False)
     frappe.db.commit()
 
     _log("Stock Entry", stock_entry_name, "T131", payload, result, "Success")
@@ -168,6 +191,8 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
         f"Good WOA! Stock Entry <b>{stock_entry_name}</b> submitted to "
         f"URA EFRIS successfully."
     )
+    if ura_doc_id:
+        msg += f"<br>URA Reference No: <b>{ura_doc_id}</b>"
     if ura_remark:
         msg += f"<br>URA Response: <b>{ura_remark}</b>"
 
@@ -382,6 +407,36 @@ def _extract_remark(result) -> str:
                 else f"{label}[{rc}] {rm}"
             )
     return " | ".join(msgs)
+
+
+def _extract_ura_doc_id(result) -> str:
+    """
+    Extract the URA-assigned T131 document reference number from the response.
+
+    T131 returns a list of per-item result objects.  The document-level
+    reference number may appear under several field names depending on the
+    EFRIS version:
+        invoiceId       — used by most T-codes
+        goodsStockInId  — T131-specific stock-in document ID
+        stockInId       — alternate field name seen in some versions
+        stockId         — shorter variant
+        id              — generic fallback
+
+    Returns the first non-empty, non-zero value found, or "" if not present.
+    """
+    candidates = (
+        result if isinstance(result, list)
+        else [result] if isinstance(result, dict)
+        else []
+    )
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        for key in ("invoiceId", "goodsStockInId", "stockInId", "stockId", "id"):
+            val = str(item.get(key) or "").strip()
+            if val and val not in ("0", ""):
+                return val
+    return ""
 
 
 # ─── Log helper ───────────────────────────────────────────────────────────────
