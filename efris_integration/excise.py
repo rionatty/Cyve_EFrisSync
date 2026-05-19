@@ -1,24 +1,28 @@
 """
-Excise duty calculation engine.
+Excise duty metadata helper for EFRIS T109 goodsDetails.
 
-Mirrors: ExciseDuty.cs, UraARInvoice.cs excise block, UraSalesOrder.cs excise block
+API spec (T109 documentation):
+  exciseFlag   "1" = item attracts excise duty   "2" = no excise
+  exciseRule   "1" = percentage (ad valorem)     "2" = quantity/unit
+  exciseRate   decimal string: "0.1" for 10%,  "0.18" for 18%
+               (NOT the percentage integer — same format as taxRate)
+  exciseRateName  MANDATORY when exciseFlag="1" (rule 2832)
+               rule=1: "<pct>%"  e.g. "10%"
+               rule=2: "<currency><rate> per <unit>"  e.g. "UGX650 per litre"
+  exciseTax    total excise tax for this line item — computed by caller
+               using _trunc2(line_net * rate / (1 + rate), 2)
+  exciseCurrency  currency name string: "UGX"  (only required for rule=2)
+  exciseUnit   URA unit code: 101=per stick, 102=per litre, 103=per kg …
+               (only required for rule=2)
+  pack / stick  only required for exciseRule="2"
 
-Industry modes (from EFRIS Settings):
-  - Alcohol Industry:  Excise = price × rate%, with minimum UGX value check.
-                       Excise per unit in USD/ton × exchange rate × weight.
-  - Beverage Industry: Excise = ExciseRatePerUnit × Volume(litres) × ExchangeRate
-  - Standard/Other:    Excise = ExciseRatePerTon × (Weight_kg/1000) × ExchangeRate
+When exciseFlag="2":
+  exciseRate   MUST be empty   (rule 1232)
+  exciseTax    MUST be empty or "0"  (rule 2790)
+  exciseRule   not validated but send "" to be safe
 
-Item fields used:
-  efris_excise_flag      — "1" = excisable, "0" = not
-  efris_excise_rate      — percentage rate (e.g. 60 for 60%)
-  efris_excise_rate_usd  — USD per unit for alcohol / per ton for others
-  efris_weight_unit      — weight per single unit in kg
-  weight_per_unit        — fallback weight field
-  volume_per_unit        — volume in litres (beverage)
-
-Returns a dict of EFRIS goodsDetails excise fields (merged into line payload).
-Returns empty dict if item is not excisable.
+taxDetails:  a SEPARATE row with taxCategoryCode="05" must be included
+             taxRateName is MANDATORY for code "05"  (rule 2831)
 """
 
 import frappe
@@ -27,85 +31,68 @@ from efris_integration.utils.helpers import safe_float
 
 def compute_excise_for_line(line, item_fields: dict, settings, currency: str) -> dict:
     """
-    Compute excise fields for a single invoice/order line.
+    Return excise metadata fields ready to be merged into a goodsDetails item.
 
-    Returns a dict ready to be merged into the EFRIS goodsDetails line item.
-    Returns {} (no excise fields) if the item is not excisable.
+    NOTE: exciseTax is set to "0" here.  The caller (invoice.py / _build_goods_and_tax)
+    must overwrite it with the correctly truncated value computed from line_net:
+        exciseTax = _trunc2(line_net * excise_decimal / (1 + excise_decimal))
+
+    Returns a dict with ALL excise keys so the goodsDetails payload is always
+    complete.  For non-excise items (exciseFlag="2") all excise values are empty.
     """
-    excise_flag = str(item_fields.get("efris_excise_flag") or "0")
+    excise_flag = str(item_fields.get("efris_excise_flag") or "0").strip()
+
     if excise_flag != "1":
+        # Non-excisable item — send flag="2" and empty values for all other fields
+        # rule 1232: exciseRate MUST be empty when exciseFlag="2"
+        # rule 2790: exciseTax MUST be empty or "0" when exciseFlag="2"
         return {
-            "exciseFlag": "2",
-            "exciseRate": "",
-            "exciseRule": "",
-            "exciseTax": "",
-            "pack": "",
-            "stick": "",
-            "exciseUnit": "",
+            "exciseFlag":     "2",
+            "exciseRate":     "",
+            "exciseRule":     "",
+            "exciseTax":      "",
+            "pack":           "",
+            "stick":          "",
+            "exciseUnit":     "",
             "exciseCurrency": "",
+            "exciseRateName": "",
         }
 
-    alcohol_mode = settings.get("alcohol_industry") == "1"
-    beverage_mode = settings.get("beverage_industry") == "1"
+    # ── Excisable item ────────────────────────────────────────────────────────
+    excise_rate_pct     = safe_float(item_fields.get("efris_excise_rate") or 0)
+    excise_rate_decimal = excise_rate_pct / 100          # 10.0 → 0.1
 
-    excise_rate_pct = safe_float(item_fields.get("efris_excise_rate"))      # e.g. 60 → 60%
-    excise_rate_usd = safe_float(item_fields.get("efris_excise_rate_usd"))  # USD/ton or USD/unit
-    weight_per_unit = safe_float(
-        item_fields.get("efris_weight_unit") or item_fields.get("weight_per_unit")
-    )
-    volume_per_unit = safe_float(item_fields.get("volume_per_unit"))
-    qty = safe_float(line.qty)
-    unit_price = safe_float(line.rate)
+    # Format as decimal string, no trailing zeros: 0.1 not 0.10
+    excise_rate_str = f"{excise_rate_decimal:g}"         # "0.1", "0.18", "0.6"
 
-    # Exchange rate: UGX per 1 USD
-    exchange_rate = _get_usd_rate()
+    # All URA excise goods in Uganda use ad valorem (percentage) rule
+    # exciseRule="1" = percentage;  exciseRule="2" = quantity/unit of measurement
+    excise_rule = "1"
 
-    excise_per_unit = 0.0
-    total_excise = 0.0
-    excise_rule = ""
-
-    if alcohol_mode:
-        # Alcohol: 60% of value, compare against minimum threshold
-        value_based = unit_price * excise_rate_pct / 100
-        usd_based = excise_rate_usd * exchange_rate  # USD/unit × rate
-        excise_per_unit = max(value_based, usd_based)
-        total_excise = excise_per_unit * qty
-        excise_rule = "102"  # specific + ad valorem
-
-    elif beverage_mode:
-        # Beverage: rate × volume (litres) per unit × exchange rate
-        if volume_per_unit:
-            excise_per_unit = excise_rate_usd * volume_per_unit * exchange_rate
-        else:
-            excise_per_unit = excise_rate_pct * unit_price / 100
-        total_excise = excise_per_unit * qty
-        excise_rule = "103"  # specific
-
+    # exciseRateName: MANDATORY for exciseFlag="1" (rule 2832)
+    # For rule=1: "(rate_pct)%"  e.g. "10%"
+    if excise_rate_pct == int(excise_rate_pct):
+        excise_rate_name = f"{int(excise_rate_pct)}%"
     else:
-        # Standard / tobacco / other: USD per tonne × weight in tonnes × exchange rate
-        weight_tonnes = weight_per_unit / 1000.0  # kg → tonnes
-        if weight_tonnes:
-            excise_per_unit = excise_rate_usd * weight_tonnes * exchange_rate
-        else:
-            excise_per_unit = excise_rate_pct * unit_price / 100
-        total_excise = excise_per_unit * qty
-        excise_rule = "101"  # specific
+        excise_rate_name = f"{excise_rate_pct}%"
 
+    # pack/stick/exciseUnit/exciseCurrency only required for exciseRule="2"
+    # Leave empty for percentage (rule="1") to avoid invalid-field errors
     return {
-        "exciseFlag": "1",
-        "exciseRate": str(round(excise_rate_pct, 4)),
-        "exciseRule": excise_rule,
-        "exciseTax": str(round(total_excise, 2)),
-        "pack": str(qty),
-        "stick": "1",
-        "exciseUnit": "101",   # UGX
-        "exciseCurrency": "101",
+        "exciseFlag":     "1",
+        "exciseRate":     excise_rate_str,   # "0.1" for 10% — decimal, NOT integer
+        "exciseRule":     excise_rule,        # "1" = ad valorem percentage
+        "exciseTax":      "0",               # placeholder — caller overwrites this
+        "pack":           "",                # not required for exciseRule="1"
+        "stick":          "",                # not required for exciseRule="1"
+        "exciseUnit":     "",                # not required for exciseRule="1"
+        "exciseCurrency": "",                # not required for exciseRule="1"
+        "exciseRateName": excise_rate_name,  # e.g. "10%"  — MANDATORY (rule 2832)
     }
 
 
 def _get_usd_rate() -> float:
     """Get current USD→UGX exchange rate from ERPNext Currency Exchange."""
-    import frappe
     from frappe.utils import today
 
     rate = frappe.db.get_value(
@@ -114,14 +101,13 @@ def _get_usd_rate() -> float:
         "exchange_rate",
     )
     if not rate:
-        # Try most recent available
         rate = frappe.db.get_value(
             "Currency Exchange",
             {"from_currency": "USD", "to_currency": "UGX"},
             "exchange_rate",
             order_by="date desc",
         )
-    return float(rate) if rate else 3800.0  # fallback to approximate rate
+    return float(rate) if rate else 3800.0
 
 
 # ─── Bulk excise recalculation (called from Sales Order / Sales Invoice form) ───
@@ -133,18 +119,22 @@ def recalculate_excise(doctype: str, docname: str) -> dict:
     Saves updated excise amounts back to the document lines.
     Called from the EFRIS toolbar button.
     """
-    import frappe
-    from efris_integration.utils.helpers import get_item_efris_fields
+    from efris_integration.utils.helpers import get_item_efris_fields, get_efris_settings
 
-    from efris_integration.utils.helpers import get_efris_settings
-    doc = frappe.get_doc(doctype, docname)
+    doc      = frappe.get_doc(doctype, docname)
     settings = get_efris_settings(doc.company)
 
     total_excise = 0.0
     for line in doc.items:
         item_fields = get_item_efris_fields(line.item_code)
         excise_data = compute_excise_for_line(line, item_fields, settings, doc.currency)
-        excise_amt = float(excise_data.get("exciseTax") or 0)
+        # For display purposes use a simple percentage calculation
+        if excise_data.get("exciseFlag") == "1":
+            rate_decimal = safe_float(excise_data.get("exciseRate") or 0)
+            net_amt = safe_float(getattr(line, "net_amount", None) or line.amount)
+            excise_amt = round(net_amt * rate_decimal / (1 + rate_decimal), 2)
+        else:
+            excise_amt = 0.0
         line.efris_excise_tax = excise_amt
         total_excise += excise_amt
 

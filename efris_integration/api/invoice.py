@@ -495,51 +495,72 @@ def _build_goods_and_tax(
         total_tax   += tax_amount
         total_gross += gross_amount
 
-        # ── Excise (T127 rates if enabled) ──────────────────────────────────
-        excise_data = compute_excise_for_line(
-            line, item_fields, settings, doc.currency
-        )
+        # ── Excise duty ──────────────────────────────────────────────────────
+        # compute_excise_for_line returns metadata only; exciseTax="0" placeholder.
+        # We overwrite exciseTax here using the same _trunc2 formula as VAT:
+        #   exciseTax = trunc(line_net × excise_decimal / (1 + excise_decimal), 2)
+        # line_net = gross - VAT_tax = the VAT-exclusive (post-VAT, pre-excise) amount.
+        excise_data = compute_excise_for_line(line, item_fields, settings, doc.currency)
+
+        if excise_data.get("exciseFlag") == "1":
+            excise_decimal = safe_float(excise_data.get("exciseRate") or "0")
+            if excise_decimal > 0:
+                # Extract excise from the VAT-exclusive line amount
+                excise_tax_amount = _trunc2(line_net * excise_decimal / (1 + excise_decimal))
+                excise_base       = round(line_net - excise_tax_amount, 2)
+                excise_data["exciseTax"] = str(excise_tax_amount)
+
+                # Accumulate a separate excise tax bucket (taxCategoryCode "05")
+                if "excise" not in tax_buckets:
+                    tax_buckets["excise"] = {
+                        "net": 0.0, "tax": 0.0, "gross": 0.0,
+                        "rate":      excise_data["exciseRate"],
+                        "rate_name": excise_data["exciseRateName"],
+                        "excise_unit":     excise_data.get("exciseUnit", ""),
+                        "excise_currency": excise_data.get("exciseCurrency", ""),
+                    }
+                tax_buckets["excise"]["net"]   += excise_base
+                tax_buckets["excise"]["tax"]   += excise_tax_amount
+                tax_buckets["excise"]["gross"] += line_net   # = excise_base + excise_tax
 
         # ── Discount ────────────────────────────────────────────────────────
-        # SAP B1: discountFlag="2" → discountTotal / discountTaxRate omitted
-        # discountFlag="1" → item carries discount; must be followed by flag="0" line
-        # For simplicity we use flag="2" (no explicit discount line) — the discount
-        # is already reflected in the net unit price ERPNext stores after applying it.
-        discount_flag = "2"
+        discount_flag = "2"   # "2" = no explicit discount line (discount in unit price)
 
         # ── Goods item ──────────────────────────────────────────────────────
         goods_cat_id = item_fields.get("efris_goods_category_id") or "238"
 
-        # vatApplicableFlag: always "1" for VAT-registered companies.
-        # "0" = "Out of Scope for VAT" — requires special URA authorization (error 2856).
-        # The actual rate (18%, 0%, exempt) is carried by taxRate + taxCategoryCode.
-        vat_applicable = "1"
+        # categoryId: for excise items = exciseDutyCode (e.g. "LED010300")
+        #             for non-excise  = same as goodsCategoryId (VAT goods category)
+        if excise_data.get("exciseFlag") == "1":
+            excise_cat_id   = item_fields.get("efris_excise_category_id") or goods_cat_id
+            excise_cat_name = item_fields.get("efris_excise_category_name") or line.item_group or ""
+        else:
+            excise_cat_id   = goods_cat_id
+            excise_cat_name = line.item_group or ""
 
         good: dict = {
             "item":              line.item_name or line.item_code,
             "itemCode":          line.item_code,
             "qty":               str(qty),
             "unitOfMeasure":     uom_code,
-            # SAP B1: UnitPrice is always VAT-inclusive (gross)
-            "unitPrice":         str(gross_unit_price),
-            "total":             str(gross_amount),
-            "taxRate":           ura_rate_str,        # "0.18", "0", or "-"
-            "tax":               str(tax_amount),
-            # remainAmount = total when no discount (SAP B1 requirement)
-            "remainAmount":      str(gross_amount),
-            "orderNumber":       str(idx - 1),         # URA: must start from 0 (error 1219)
-            "discountFlag":      discount_flag,        # "2" = no discount
-            "deemedFlag":        "2",                  # "2" = not a deemed supply
-            "vatApplicableFlag": vat_applicable,       # T109 API spec field
-            "categoryId":        goods_cat_id,
-            "categoryName":      line.item_group or "",
-            "goodsCategoryId":   goods_cat_id,
+            "unitPrice":         str(gross_unit_price),   # VAT-inclusive gross
+            "total":             str(gross_amount),        # trunc(qty × unitPrice, 2)
+            "taxRate":           ura_rate_str,             # "0.18", "0", or "-"
+            "tax":               str(tax_amount),          # trunc(total × rate/(1+rate), 2)
+            "remainAmount":      str(gross_amount),        # = total (no discount)
+            "orderNumber":       str(idx - 1),             # 0-based (rule 1219)
+            "discountFlag":      discount_flag,            # "2" = no discount
+            "deemedFlag":        "2",                      # not a deemed supply
+            "vatApplicableFlag": "1",                      # always 1 for VAT-registered
+            "categoryId":        excise_cat_id,            # exciseDutyCode when flag=1
+            "categoryName":      excise_cat_name,
+            "goodsCategoryId":   goods_cat_id,             # VAT commodity classification
             "goodsCategoryName": line.item_group or "",
-            **excise_data,
+            **excise_data,   # exciseFlag, exciseRate, exciseRule, exciseTax, exciseRateName…
         }
         goods_details.append(good)
 
-        # ── Aggregate tax buckets ────────────────────────────────────────────
+        # ── Aggregate VAT tax buckets ────────────────────────────────────────
         if cat_code not in tax_buckets:
             tax_buckets[cat_code] = {
                 "net": 0.0, "tax": 0.0, "gross": 0.0,
@@ -550,31 +571,50 @@ def _build_goods_and_tax(
         tax_buckets[cat_code]["gross"] += gross_amount
 
     # ── Tax details ─────────────────────────────────────────────────────────
-    # URA rule [1342]: netAmount + taxAmount MUST equal grossAmount exactly.
-    # We derive grossAmount = net + tax (never sum independently) so it holds
-    # even when individual line truncations produce sub-cent gaps.
+    # Rule [1342]: netAmount + taxAmount MUST equal grossAmount exactly.
+    # Excise duty gets its own row with taxCategoryCode="05" — separate from VAT.
+    # Rule 2831: taxRateName is MANDATORY when taxCategoryCode is "05".
     tax_details = []
     for code, v in tax_buckets.items():
         t_net   = round(v["net"],  2)
         t_tax   = round(v["tax"],  2)
-        t_gross = round(t_net + t_tax, 2)   # derived — guarantees constraint
-        tax_details.append({
-            "taxCategory":     v["name"],
-            "taxCategoryCode": code,
-            "netAmount":       str(t_net),
-            "taxRate":         v["rate"],
-            "taxAmount":       str(t_tax),
-            "grossAmount":     str(t_gross),  # = netAmount + taxAmount  ✓
-            "exciseUnit":      "",
-            "exciseCurrency":  "",
-            "taxRateName":     _tax_rate_label(v["rate"]),
-        })
+        t_gross = round(t_net + t_tax, 2)   # always derived — guarantees rule [1342]
+
+        if code == "excise":
+            # Excise Duty row — taxCategoryCode "05"
+            tax_details.append({
+                "taxCategory":     "Excise Duty",
+                "taxCategoryCode": "05",
+                "netAmount":       str(t_net),
+                "taxRate":         v["rate"],        # decimal: "0.1" for 10%
+                "taxAmount":       str(t_tax),
+                "grossAmount":     str(t_gross),
+                "exciseUnit":      v["excise_unit"],
+                "exciseCurrency":  v["excise_currency"],
+                "taxRateName":     v["rate_name"],   # e.g. "10%" — MANDATORY (rule 2831)
+            })
+        else:
+            # VAT row — taxCategoryCode "01"/"02"/"03"
+            tax_details.append({
+                "taxCategory":     v["name"],
+                "taxCategoryCode": code,
+                "netAmount":       str(t_net),
+                "taxRate":         v["rate"],
+                "taxAmount":       str(t_tax),
+                "grossAmount":     str(t_gross),
+                "exciseUnit":      "",
+                "exciseCurrency":  "",
+                "taxRateName":     _tax_rate_label(v["rate"]),
+            })
 
     # ── Summary ─────────────────────────────────────────────────────────────
-    # Same consistency rule: grossAmount = netAmount + taxAmount.
+    # Rule [1345]: summary.grossAmount = sum of all taxDetails grossAmounts
+    # EXCEPT the Excise Duty row (taxCategoryCode "05").
+    # total_net / total_tax / total_gross only accumulate VAT figures (not excise),
+    # so they already satisfy rule [1345] without any additional filtering.
     s_net   = round(total_net,  2)
     s_tax   = round(total_tax,  2)
-    s_gross = round(s_net + s_tax, 2)   # derived — never independently summed
+    s_gross = round(s_net + s_tax, 2)
     summary = {
         "netAmount":   str(s_net),
         "taxAmount":   str(s_tax),

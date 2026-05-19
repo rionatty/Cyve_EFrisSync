@@ -133,6 +133,8 @@ def get_item_efris_fields(item_code: str) -> dict:
             "efris_excise_flag",
             "efris_excise_rate",
             "efris_excise_rate_usd",
+            "efris_excise_category_id",    # exciseDutyCode for categoryId (T109 API)
+            "efris_excise_category_name",  # excise duty name for categoryName
             "efris_weight_unit",
             "weight_per_unit",
             "weight_uom",
