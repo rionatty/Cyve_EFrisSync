@@ -470,12 +470,15 @@ def _build_goods_and_tax(
         # URA rule [1316]: total = trunc(qty × unitPrice, 2)  — TRUNCATE, not round
         gross_amount = _trunc2(qty * gross_unit_price)
 
-        # Tax amount: derived from gross so the three figures are always consistent.
-        # (gross - net avoids any rounding gap between independently computed values.)
-        if erp_tax_amount is not None:
-            tax_amount = round(erp_tax_amount, 2)
+        # URA rule [2776]: tax = trunc(total × taxRate / (1 + taxRate), 2)
+        # total is VAT-inclusive (gross), so tax is back-extracted from gross.
+        # e.g. gross=118, rate=18% → tax = trunc(118 × 0.18/1.18, 2) = 18.00
+        # Using gross-minus-net would differ by 0.01 due to truncation gaps.
+        if tax_rate > 0:
+            tax_decimal = tax_rate / 100           # 18.0 → 0.18
+            tax_amount  = _trunc2(gross_amount * tax_decimal / (1 + tax_decimal))
         else:
-            tax_amount = round(gross_amount - net_amount, 2)
+            tax_amount  = 0.0
 
         total_net   += net_amount
         total_tax   += tax_amount
