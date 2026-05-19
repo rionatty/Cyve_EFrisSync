@@ -458,14 +458,20 @@ def _build_goods_and_tax(
             _resolve_line_tax(doc, line, _company)
 
         # ── Amounts ─────────────────────────────────────────────────────────
-        net_unit_price  = safe_float(line.rate)
-        qty             = safe_float(line.qty)
-        net_amount      = safe_float(
-            getattr(line, "net_amount", None) or line.amount
-        )
+        qty = safe_float(line.qty)
 
-        # Gross unit price: VAT-inclusive, kept at 4 dp for precision
-        gross_unit_price = round(net_unit_price * (1 + tax_rate / 100), 4)
+        # Detect tax-inclusive pricing:
+        # When "Is this Tax Included?" is checked on the tax row,
+        # line.rate already contains the VAT-inclusive (gross) price.
+        # In that case we must NOT multiply by (1 + rate) again.
+        tax_included_in_rate = _is_tax_included_in_rate(doc)
+
+        if tax_included_in_rate:
+            # line.rate is already the gross (VAT-inclusive) unit price
+            gross_unit_price = round(safe_float(line.rate), 4)
+        else:
+            # line.rate is net; gross = net × (1 + rate)
+            gross_unit_price = round(safe_float(line.rate) * (1 + tax_rate / 100), 4)
 
         # URA rule [1316]: total = trunc(qty × unitPrice, 2)  — TRUNCATE, not round
         gross_amount = _trunc2(qty * gross_unit_price)
@@ -598,6 +604,20 @@ def _pay_way(doc) -> list:
             "orderNumber":   "1",
         }
     ]
+
+
+def _is_tax_included_in_rate(doc) -> bool:
+    """
+    Return True if the invoice's VAT is already baked into item prices
+    (ERPNext "Is this Tax Included in Basic Rate?" checkbox on tax row).
+
+    When True:  line.rate = gross (VAT-inclusive) → do NOT multiply by (1+rate)
+    When False: line.rate = net  (VAT-exclusive)  → multiply by (1+rate) to get gross
+    """
+    for tax in (doc.taxes or []):
+        if tax.charge_type == "On Net Total":
+            return bool(getattr(tax, "included_in_print_rate", 0))
+    return False
 
 
 def _trunc2(x: float) -> float:
