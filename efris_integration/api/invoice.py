@@ -11,6 +11,7 @@ Pricing modes (controlled by EFRIS Settings):
 """
 
 import json
+import math
 from datetime import datetime
 
 import frappe
@@ -462,16 +463,19 @@ def _build_goods_and_tax(
         net_amount      = safe_float(
             getattr(line, "net_amount", None) or line.amount
         )
-        # Prefer ERPNext's pre-computed per-line tax (from item_wise_tax_detail).
-        # Fall back to net × rate if ERPNext didn't store per-line detail.
+
+        # Gross unit price: VAT-inclusive, kept at 4 dp for precision
+        gross_unit_price = round(net_unit_price * (1 + tax_rate / 100), 4)
+
+        # URA rule [1316]: total = trunc(qty × unitPrice, 2)  — TRUNCATE, not round
+        gross_amount = _trunc2(qty * gross_unit_price)
+
+        # Tax amount: derived from gross so the three figures are always consistent.
+        # (gross - net avoids any rounding gap between independently computed values.)
         if erp_tax_amount is not None:
             tax_amount = round(erp_tax_amount, 2)
         else:
-            tax_amount = round(net_amount * tax_rate / 100, 2)
-
-        # URA always wants gross (VAT-inclusive) amounts in goodsDetails
-        gross_unit_price = round(net_unit_price * (1 + tax_rate / 100), 4)
-        gross_amount     = round(net_amount + tax_amount, 2)
+            tax_amount = round(gross_amount - net_amount, 2)
 
         total_net   += net_amount
         total_tax   += tax_amount
@@ -579,6 +583,16 @@ def _pay_way(doc) -> list:
             "orderNumber":   "1",
         }
     ]
+
+
+def _trunc2(x: float) -> float:
+    """
+    Truncate to exactly 2 decimal places (floor, not round).
+
+    URA rule [1316]: goodsDetails.total must equal trunc(qty × unitPrice, 2).
+    Python's round() can differ by 0.01 due to banker's rounding — use floor.
+    """
+    return math.floor(x * 100) / 100
 
 
 def _resolve_line_tax(doc, line, company: str) -> tuple:
