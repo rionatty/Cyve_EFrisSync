@@ -280,6 +280,19 @@ CUSTOM_FIELDS = {
             "fieldname": "efris_excise_duty_category",
             "fieldtype": "Data",
             "label":     "Excise Duty Category",
+            "description": "URA excise duty category code sent in T130 goods registration (e.g. LED010300)",
+        },
+        {
+            "fieldname": "efris_excise_category_id",
+            "fieldtype": "Data",
+            "label":     "Excise Category Id (T109)",
+            "description": "URA excise category ID used in T109 invoice goodsDetails.categoryId when exciseFlag='1'. Leave blank to fall back to Commodity Category Id.",
+        },
+        {
+            "fieldname": "efris_excise_category_name",
+            "fieldtype": "Data",
+            "label":     "Excise Category Name (T109)",
+            "description": "URA excise category name for T109 invoice goodsDetails.categoryName when exciseFlag='1'. Leave blank to fall back to item group.",
         },
         {
             "fieldname": "efris_piece_uom",

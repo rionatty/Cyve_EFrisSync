@@ -1,2 +1,3 @@
 efris_integration.patches.v1_0.install_custom_fields
 efris_integration.patches.v1_1.add_item_efris_tab
+efris_integration.patches.v1_2.add_excise_category_fields

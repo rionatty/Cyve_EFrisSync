@@ -420,7 +420,7 @@ def _basic_info(
         "invoiceKind":         "1",            # "1"=normal, "2"=prepayment
         "dataSource":          "103",          # 103=ERP system
         "invoiceIndustryCode": industry_code,
-        "vatApplicableFlag":   "0",
+        "vatApplicableFlag":   "1",    # "1" = VAT registered (always for EFRIS taxpayers)
         "isBatch":             "0",            # T109 API spec: "0" = not a batch invoice
     }
 
@@ -500,7 +500,20 @@ def _build_goods_and_tax(
         # We overwrite exciseTax here using the same _trunc2 formula as VAT:
         #   exciseTax = trunc(line_net × excise_decimal / (1 + excise_decimal), 2)
         # line_net = gross - VAT_tax = the VAT-exclusive (post-VAT, pre-excise) amount.
+        #
+        # Guard: if the taxpayer is not registered for Local Excise Duty with URA
+        # (EFRIS Settings → "Registered for Local Excise Duty" unchecked),
+        # force exciseFlag="2" regardless of the item flag to avoid URA error [681].
         excise_data = compute_excise_for_line(line, item_fields, settings, doc.currency)
+
+        registered_for_excise = bool(getattr(settings, "has_local_excise_duty", False))
+        if excise_data.get("exciseFlag") == "1" and not registered_for_excise:
+            # Taxpayer not registered — override to non-excise and clear all excise fields
+            excise_data = {
+                "exciseFlag": "2", "exciseRate": "", "exciseRule": "",
+                "exciseTax":  "",  "pack":        "", "stick":      "",
+                "exciseUnit": "",  "exciseCurrency": "", "exciseRateName": "",
+            }
 
         if excise_data.get("exciseFlag") == "1":
             excise_decimal = safe_float(excise_data.get("exciseRate") or "0")
