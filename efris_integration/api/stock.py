@@ -46,12 +46,27 @@ from efris_integration.utils.helpers import (
     safe_str,
 )
 
-# ─── Stock-in option codes (mirrors SAP B1 UDF U_OT_OPTION) ─────────────────
-STOCK_IN_IMPORT = "101"
-STOCK_IN_LOCAL = "102"
+# ─── Stock-in option codes (T114 operationType) ─────────────────────────────
+STOCK_IN_IMPORT      = "101"
+STOCK_IN_LOCAL       = "102"
 STOCK_IN_MANUFACTURE = "103"
-STOCK_IN_OPENING = "104"
-STOCK_IN_TRANSFER = "105"
+STOCK_IN_OPENING     = "104"
+STOCK_IN_TRANSFER    = "105"
+
+# ─── Goods-issue operationType codes (T115) ──────────────────────────────────
+# Mirrors SAP B1 EFRIS tab "EFRIS Option" dropdown:
+#   Normal Issue (default)   → 201
+#   Issue From Production    → 202  (Material Transfer for Manufacture)
+#   Inter-branch out         → 203  (handled in inventory_transfer.py)
+#   Out of Stock Adjust      → 206
+#   Error Adjust             → 207
+#   Others                   → 208
+ISSUE_TYPE_MAP = {
+    "Normal Issue":        "201",
+    "Out of Stock Adjust": "206",
+    "Error Adjust":        "207",
+    "Others":              "208",
+}
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -198,28 +213,45 @@ def _post_t115(doc, settings, doctype: str, docname: str) -> dict:
     goods_details = _build_stock_goods(items, doc)
     total = sum(safe_float(i.amount) for i in items)
 
+    # ── Map issue type → URA operationType code ─────────────────────────────
+    # Mirrors SAP B1 EFRIS tab "EFRIS Option" field.
+    issue_type     = (doc.get("efris_issue_type") or "Normal Issue").strip()
+    operation_type = ISSUE_TYPE_MAP.get(issue_type, "201")
+
+    # Build remarks — prepend adjustment reason for non-normal issues
+    base_remarks  = (doc.get("remarks") or "").strip()
+    adj_reason    = (doc.get("efris_adjust_reason") or "").strip()
+    if operation_type in ("206", "207", "208") and adj_reason:
+        remarks = f"{adj_reason} | {base_remarks}" if base_remarks else adj_reason
+    else:
+        remarks = base_remarks
+
     payload = {
-        "operationType": "201",  # Normal goods issue
+        "operationType": operation_type,
         "goodsTypeCode": "1",
         "recipientName": doc.get("efris_recipient_name") or "",
-        "recipientTin": doc.get("efris_recipient_tin") or "",
-        "referenceNo": doc.name,
-        "currency": "UGX",
-        "remarks": doc.get("remarks") or "",
-        "operator": frappe.session.user,
-        "deviceNo": settings.device_no,
-        "issuedDate": str(doc.posting_date) + " 00:00:00",
-        "goodsDetails": goods_details,
+        "recipientTin":  doc.get("efris_recipient_tin")  or "",
+        "referenceNo":   doc.name,
+        "currency":      "UGX",
+        "remarks":       remarks,
+        "operator":      frappe.session.user,
+        "deviceNo":      settings.device_no,
+        "issuedDate":    str(doc.posting_date) + " 00:00:00",
+        "goodsDetails":  goods_details,
         "summary": {
             "totalAmount": efris_num(total, decimal_places=2),
-            "itemCount": str(len(goods_details)),
-            "remarks": "",
+            "itemCount":   str(len(goods_details)),
+            "remarks":     remarks,
         },
     }
 
     result = client.call("T115", payload, encrypt=True, sign=True, doc_type=doctype, doc_name=docname)
     _save_efris_result(doc, result)
-    frappe.msgprint(f"Stock Issue submitted to EFRIS. ID: {result.get('invoiceId','')}")
+    frappe.msgprint(
+        f"Stock Issue submitted to EFRIS. "
+        f"Type: {issue_type} ({operation_type}). "
+        f"ID: {result.get('invoiceId', '')}"
+    )
     return result
 
 

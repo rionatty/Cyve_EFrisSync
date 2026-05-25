@@ -71,4 +71,5 @@ fixtures = [
     {"dt": "Custom Field",    "filters": [["module", "=", "EFRIS Integration"]]},
     {"dt": "Property Setter", "filters": [["module", "=", "EFRIS Integration"]]},
     {"dt": "Workspace",       "filters": [["name", "=", "EFRIS Integration"]]},
+    {"dt": "Print Format",    "filters": [["name", "=", "EFRIS Sales Invoice"]]},
 ]
