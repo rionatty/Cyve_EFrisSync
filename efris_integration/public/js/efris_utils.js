@@ -59,15 +59,6 @@ window.efris_call = function (frm, method, args, reload) {
 };
 
 
-// ── Confirm then execute an action ────────────────────────────────────────────
-window.efris_confirm_and_call = function (frm, label, action_fn) {
-    frappe.confirm(
-        __("Are you sure you want to: <b>" + label + "</b>?"),
-        action_fn
-    );
-};
-
-
 // ── Open EFRIS Log list filtered to this document ─────────────────────────────
 window.efris_open_log = function (frm) {
     frappe.set_route("List", "EFRIS Log", {

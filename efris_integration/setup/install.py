@@ -206,31 +206,6 @@ CUSTOM_FIELDS = {
          "options": "\n101\n102\n103\n104\n105"},
         {"fieldname": "efris_return_reason",              "fieldtype": "Data",     "label": "Return Reason",
          "insert_after": "efris_return_reason_code",       "hidden": 1},
-
-        # ── T115 Issue-type fields (visible, allow_on_submit) ─────────────────
-        # Mirrors SAP B1 EFRIS tab: "EFRIS Option" dropdown + "Reason" text.
-        # operationType codes: 201=Normal, 206=Out of Stock Adjust,
-        #                      207=Error Adjust, 208=Others, 203=Inter-branch out
-        {
-            "fieldname":    "efris_issue_type",
-            "fieldtype":    "Select",
-            "label":        "EFRIS Issue Type",
-            "insert_after": "efris_return_reason",
-            "options":      "\nNormal Issue\nOut of Stock Adjust\nError Adjust\nOthers",
-            "default":      "Normal Issue",
-            "allow_on_submit": 1,
-            "description":  "Maps to T115 operationType: Normal(201), Out of Stock Adjust(206), Error Adjust(207), Others(208).",
-            "module":       "EFRIS Integration",
-        },
-        {
-            "fieldname":    "efris_adjust_reason",
-            "fieldtype":    "Small Text",
-            "label":        "Adjustment Reason",
-            "insert_after": "efris_issue_type",
-            "allow_on_submit": 1,
-            "description":  "Required when EFRIS Issue Type is Out of Stock Adjust, Error Adjust, or Others. Sent as 'remarks' to URA.",
-            "module":       "EFRIS Integration",
-        },
     ],
 
     # ─── Stock Reconciliation ─────────────────────────────────────────────
