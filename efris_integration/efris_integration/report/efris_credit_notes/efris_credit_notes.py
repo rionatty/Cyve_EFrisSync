@@ -40,7 +40,8 @@ def _data(f):
     show = f.get("show") or "To Upload"
     if show == "To Upload":
         conditions.append(
-            "(ifnull(cn.efris_cn_reference_no, '') = '' or cn.efris_cn_approval in ('Rejected', 'Voided'))"
+            "((ifnull(cn.efris_cn_reference_no, '') = '' and ifnull(cn.efris_fdn_number, '') = '')"
+            " or cn.efris_cn_approval in ('Rejected', 'Voided'))"
         )
     elif show == "Awaiting Approval":
         conditions.append("ifnull(cn.efris_cn_reference_no, '') != '' and cn.efris_cn_approval = 'Pending'")

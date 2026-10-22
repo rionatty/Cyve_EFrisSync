@@ -35,7 +35,8 @@ frappe.query_reports["EFRIS Invoice Import"] = {
             }
             const purchases = frappe.query_report.get_filter_value("direction") === "Purchases";
             frappe.confirm(
-                __("Create {0} draft {1} from URA?", [fdns.length, purchases ? __("Purchase Invoices") : __("Sales Invoices")]),
+                __("Create {0} draft {1} from URA? Credit notes become returns against their original invoice.",
+                    [fdns.length, purchases ? __("Purchase Invoices") : __("Sales Invoices")]),
                 () => frappe.call({
                     method: "efris_integration.api.ura_import.create_drafts",
                     args: {

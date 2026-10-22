@@ -70,6 +70,8 @@ def submit_credit_note(invoice_name: str, reason_code: str = "102", reason: str 
             f"{doc.get('efris_cn_approval') or 'Pending'}). Use <b>Check EFRIS Status</b>.",
             title="Already Sent",
         )
+    if not doc.get("efris_cn_reference_no") and doc.get("efris_fdn_number"):
+        frappe.throw(f"Already on EFRIS as credit note {doc.efris_fdn_number}.", title="Already Sent")
     reason_code = str(reason_code or "102")
     if reason_code not in REASONS:
         frappe.throw(f"Unknown credit note reason code {reason_code}.", title="EFRIS")

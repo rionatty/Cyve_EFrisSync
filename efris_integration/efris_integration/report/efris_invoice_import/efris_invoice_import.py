@@ -5,6 +5,7 @@ EFRIS Invoice Import — URA invoices that are not in ERPNext yet
 Direction:
   Sales      invoices issued for this company outside ERPNext
   Purchases  supplier invoices URA holds for this company
+Credit notes are listed too and become returns against the original invoice.
 Tick rows and "Create Draft Invoices" (see api/ura_import.py).
 """
 
@@ -32,6 +33,8 @@ def _columns(f):
     party = "Customer" if (f.direction or "Sales") == "Sales" else "Supplier"
     return [
         {"label": "FDN", "fieldname": "name", "fieldtype": "Data", "width": 140},
+        {"label": "Type", "fieldname": "type", "fieldtype": "Data", "width": 100},
+        {"label": "Original FDN", "fieldname": "original", "fieldtype": "Data", "width": 140},
         {"label": "Issued", "fieldname": "issued", "fieldtype": "Date", "width": 95},
         {"label": f"{party} TIN", "fieldname": "party_tin", "fieldtype": "Data", "width": 110},
         {"label": f"{party} (URA)", "fieldname": "party_name", "fieldtype": "Data", "width": 200},
@@ -46,7 +49,7 @@ def _columns(f):
 
 def _data(f, records, sales):
     doctype = "Sales Invoice" if sales else "Purchase Invoice"
-    invoices = [r for r in records if not r["invalid"] and r["type"] == "1"]
+    invoices = [r for r in records if not r["invalid"] and r["type"] in ("1", "2")]
     known = existing_fdns(doctype, [r["fdn"] for r in invoices])
     if sales:
         # invoices this app uploaded carry the ERPNext name as reference
@@ -59,9 +62,13 @@ def _data(f, records, sales):
         tin = r["buyer_tin"] if sales else r["seller_tin"]
         name = r["buyer_name"] if sales else r["seller_name"]
         rows.append({
-            "name": r["fdn"], "issued": r["issued"], "party_tin": tin, "party_name": name,
+            "name": r["fdn"], "type": "Credit Note" if r["type"] == "2" else "Invoice",
+            "original": r.get("original") or "",
+            "issued": r["issued"], "party_tin": tin, "party_name": name,
             "party": find_party("Customer" if sales else "Supplier", tin, name),
             "currency": r["currency"], "gross": r["gross"], "tax": r["tax"],
             "reference": r["reference"], "device": r["device"],
         })
+    # invoices first, so an original is created before its credit note
+    rows.sort(key=lambda r: (r["type"] == "Credit Note", str(r["issued"] or "")))
     return rows

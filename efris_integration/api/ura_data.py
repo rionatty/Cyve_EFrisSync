@@ -62,6 +62,8 @@ def ura_invoices(company: str, query_type: str, from_date, to_date) -> dict:
                 if inv["fdn"] and inv["fdn"] not in seen:
                     seen.add(inv["fdn"])
                     records.append(inv)
+                    if inv["original"]:
+                        frappe.cache().hset(f"efris_ori:{company}", inv["fdn"], inv["original"])
             if page >= page_count:
                 break
             page += 1
@@ -85,9 +87,15 @@ def normalise_invoice(rec: dict) -> dict:
         "gross":       flt(rec.get("grossAmount")),
         "tax":         flt(rec.get("taxAmount")),
         "type":        str(rec.get("invoiceType") or "1").strip(),   # 1 invoice, 2 credit note, 4 debit note
+        "original":    str(rec.get("oriInvoiceNo") or "").strip(),  # credit notes: the original's FDN
         "invalid":     str(rec.get("isInvalid") or "0").strip() == "1",
         "device":      str(rec.get("deviceNo") or "").strip(),
     }
+
+
+def original_fdn(company: str, fdn: str) -> str:
+    """Original invoice FDN of a credit note seen in a T106 list ("" if unknown)."""
+    return frappe.cache().hget(f"efris_ori:{company}", fdn) or ""
 
 
 def parse_ura_date(raw):

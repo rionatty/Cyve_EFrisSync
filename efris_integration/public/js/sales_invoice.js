@@ -213,7 +213,8 @@ function _efris_stock_dialog(res, action_label, action) {
 function _credit_note_buttons(frm) {
     var ref = frm.doc.efris_cn_reference_no;
     var approval = frm.doc.efris_cn_approval || "";
-    var can_resend = !ref || approval === "Rejected" || approval === "Voided";
+    // imported from URA: already approved there, has an FDN but no application
+    var can_resend = (!ref && !frm.doc.efris_fdn_number) || approval === "Rejected" || approval === "Voided";
 
     function primary(label, fn) {
         var $b = frm.add_custom_button(label, fn);
