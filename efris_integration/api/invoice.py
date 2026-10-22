@@ -29,7 +29,7 @@ from efris_integration.utils.helpers import (
     safe_float,
     safe_str,
 )
-from efris_integration.excise import compute_excise_for_line
+from efris_integration.excise import compute_excise_for_line, excise_by_line, line_key
 
 
 # ─── T109: Submit Sales Invoice (AR Invoice) ──────────────────────────────
@@ -564,6 +564,8 @@ def _build_goods_and_tax(
     deemed = _is_deemed(buyer)
     tax_included_in_rate = _is_tax_included_in_rate(doc)
     invoice_discount = abs(safe_float(doc.get("discount_amount"))) > 0.0001
+    # Excise from the invoice's excise tax row, per line: (amount, rate %)
+    excise_map = excise_by_line(doc, settings)
     order_no = 0
 
     for line in doc.items:
@@ -572,11 +574,16 @@ def _build_goods_and_tax(
         tax_rate, cat_code, cat_name, ura_rate_str, _erp_tax = _resolve_line_tax(doc, line, _company)
         out_of_scope = cat_code == "11"
         qty = safe_float(line.qty)
+        line_excise = excise_map.get(line_key(line), (0.0, 0.0))[0]
+        excise_per_unit = line_excise / qty if qty else 0.0
 
-        # ── Gross (VAT-inclusive) prices ─────────────────────────────────────
+        # ── Gross prices: (price + excise) × (1 + VAT) — VAT is charged on
+        #    price + excise, and URA's line total includes both (SAP B1) ─────
         def gross(price):
             price = safe_float(price)
-            return round(price if tax_included_in_rate else price * (1 + tax_rate / 100), 4)
+            if tax_included_in_rate:
+                return round(price, 4)
+            return round((price + excise_per_unit) * (1 + tax_rate / 100), 4)
 
         gross_unit_price = gross(line.rate)
         list_price = safe_float(line.get("price_list_rate"))
@@ -584,8 +591,8 @@ def _build_goods_and_tax(
 
         full_total = _trunc2(qty * full_unit_price)
         if invoice_discount:
-            # net_amount carries the invoice-level discount share (ex-VAT)
-            paid_total = round(safe_float(line.net_amount) * (1 + tax_rate / 100), 2)
+            # net_amount carries the invoice-level discount share (ex-VAT, ex-excise)
+            paid_total = round((safe_float(line.net_amount) + line_excise) * (1 + tax_rate / 100), 2)
         else:
             paid_total = _trunc2(qty * gross_unit_price)
         discount = round(full_total - paid_total, 2)
@@ -619,10 +626,11 @@ def _build_goods_and_tax(
         total_tax += line_tax
         total_gross += line_gross
 
-        # ── Excise duty (unchanged rules; base = VAT-exclusive paid amount) ──
-        excise_data = compute_excise_for_line(line, item_fields, settings, doc.currency)
-        # duty calculated on the line (excise.apply_excise); None = back it out below
-        line_excise = excise_data.pop("_line_tax", None)
+        # ── Excise duty: the line's share of the invoice's excise tax row ────
+        # (base = VAT-exclusive paid amount, which includes the excise)
+        excise_data = compute_excise_for_line(line, item_fields, settings, doc.currency,
+                                              excise=excise_map.get(line_key(line)))
+        excise_tax_amount = round(excise_data.pop("_line_tax", 0.0), 2)
         registered_for_excise = bool(getattr(settings, "has_local_excise_duty", False))
         if excise_data.get("exciseFlag") == "1" and not registered_for_excise:
             excise_data = {
@@ -631,13 +639,6 @@ def _build_goods_and_tax(
                 "exciseUnit": "",  "exciseCurrency": "", "exciseRateName": "",
             }
         if excise_data.get("exciseFlag") == "1":
-            excise_decimal = safe_float(excise_data.get("exciseRate") or "0")
-            if line_excise:
-                excise_tax_amount = round(line_excise, 2)
-            elif excise_decimal > 0 and excise_data.get("exciseRule") == "1":
-                excise_tax_amount = _trunc2(line_net * excise_decimal / (1 + excise_decimal))
-            else:
-                excise_tax_amount = 0.0
             if excise_tax_amount:
                 excise_base = round(line_net - excise_tax_amount, 2)
                 excise_data["exciseTax"] = str(excise_tax_amount)
@@ -827,10 +828,24 @@ def _is_tax_included_in_rate(doc) -> bool:
     When True:  line.rate = gross (VAT-inclusive) → do NOT multiply by (1+rate)
     When False: line.rate = net  (VAT-exclusive)  → multiply by (1+rate) to get gross
     """
-    for tax in (doc.taxes or []):
-        if tax.charge_type == "On Net Total":
-            return bool(getattr(tax, "included_in_print_rate", 0))
+    for tax in _vat_rows(doc):
+        return bool(getattr(tax, "included_in_print_rate", 0))
     return False
+
+
+VAT_CHARGE_TYPES = ("On Net Total", "On Previous Row Total", "On Previous Row Amount")
+
+
+def _vat_rows(doc) -> list:
+    """
+    The invoice's VAT rows: percentage tax rows that are not the excise row
+    (EFRIS Settings → Excise Duty Account). VAT may be "On Previous Row Total"
+    when it is charged on price + excise.
+    """
+    excise_account = (frappe.get_cached_value("EFRIS Settings", doc.company, "excise_liability_account")
+                      if doc.get("company") else "") or ""
+    return [t for t in (doc.taxes or [])
+            if t.charge_type in VAT_CHARGE_TYPES and (t.account_head or "") != excise_account]
 
 
 def _trunc2(x: float) -> float:
@@ -863,10 +878,7 @@ def _resolve_line_tax(doc, line, company: str) -> tuple:
     Returns:
         (tax_rate_float, cat_code, cat_name, ura_rate_str, line_tax_amount_or_None)
     """
-    for tax in (doc.taxes or []):
-        if tax.charge_type != "On Net Total":
-            continue
-
+    for tax in _vat_rows(doc):
         tax_account = (tax.account_head or "").strip()
 
         # ── URA category from EFRIS Tax Mapping ─────────────────────────────

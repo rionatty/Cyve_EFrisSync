@@ -67,11 +67,7 @@
     "alcohol_industry",
     "has_local_excise_duty",
     "section_excise",
-    "calculate_excise",
-    "col_excise",
-    "excise_journal_entry",
-    "excise_liability_account",
-    "excise_journal_from"
+    "excise_liability_account"
   ],
 
   "fields": [
@@ -245,12 +241,7 @@
       "label": "Registered for Local Excise Duty"
     },
     { "fieldname": "section_excise", "fieldtype": "Section Break", "label": "Excise Duty" },
-    { "fieldname": "calculate_excise", "fieldtype": "Check", "label": "Calculate Excise on Sales Documents", "default": "0" },
-    { "fieldname": "col_excise", "fieldtype": "Column Break" },
-    { "fieldname": "excise_journal_entry", "fieldtype": "Check", "label": "Post Excise Duty Journal Entry", "default": "0" },
-    { "fieldname": "excise_liability_account", "fieldtype": "Link", "label": "Excise Duty Account", "options": "Account",
-      "depends_on": "excise_journal_entry", "mandatory_depends_on": "excise_journal_entry" },
-    { "fieldname": "excise_journal_from", "fieldtype": "Date", "label": "Post From", "depends_on": "excise_journal_entry" }
+    { "fieldname": "excise_liability_account", "fieldtype": "Link", "label": "Excise Duty Account", "options": "Account" }
 
   ],
 

@@ -133,8 +133,6 @@ function _efris_refresh(frm) {
         });
     }, __("EFRIS"));
 
-    _efris_excise_journal_button(frm);
-
     if (frm.doc.efris_qr_code || frm.doc.efris_qr_path) {
         frm.add_custom_button(__("View QR Code"), function () {
             if (typeof efris_show_qr === "function") {
@@ -163,24 +161,6 @@ function _efris_refresh(frm) {
     }, __("EFRIS"));
 
     console.log("[EFRIS JS v2.1] buttons rendered OK");
-}
-
-
-// ── Excise duty ───────────────────────────────────────────────────────────────
-
-frappe.ui.form.on("Sales Invoice Item", efris_excise_line_events());
-
-// "Post Excise Journal" when the invoice has excise and no journal yet
-// (normally posted automatically on submit when switched on in EFRIS Settings).
-function _efris_excise_journal_button(frm) {
-    if (frm.doc.docstatus !== 1 || !frm.doc.efris_total_excise || frm.doc.efris_excise_journal) return;
-    frm.add_custom_button(__("Post Excise Journal"), function () {
-        efris_confirm_and_call(frm,
-            __("Post the excise duty journal entry for {0}?", [frm.doc.name]),
-            function () {
-                efris_call(frm, "efris_integration.excise.post_excise_journal", { invoice_name: frm.doc.name });
-            });
-    }, __("EFRIS"));
 }
 
 
@@ -280,8 +260,6 @@ function _credit_note_buttons(frm) {
             window.open(frm.doc.efris_qr_path, "_blank");
         }, __("EFRIS"));
     }
-
-    _efris_excise_journal_button(frm);
 
     if (frm.doc.docstatus >= 1) {
         frm.add_custom_button(__("EFRIS Log"), function () { efris_open_log(frm); }, __("EFRIS"));
