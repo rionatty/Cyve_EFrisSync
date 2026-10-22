@@ -13,6 +13,7 @@ app_license = "MIT"
 doctype_js = {
     "Sales Invoice":      "public/js/sales_invoice.js",
     "Sales Order":        "public/js/sales_order.js",
+    "Delivery Note":      "public/js/delivery_note.js",
     "Purchase Receipt":   "public/js/purchase_receipt.js",
     "Stock Entry":        "public/js/stock_entry.js",
     "Stock Reconciliation": "public/js/stock_reconciliation.js",
@@ -27,12 +28,21 @@ doc_events = {
     "EFRIS Settings": {
         "on_update": "efris_integration.api.t127.invalidate_cache",
     },
+    # Excise duty is calculated on the lines before ERPNext's own validation
+    # (so totals and taxes include it); see excise.py.
     "Sales Invoice": {
+        "before_validate": "efris_integration.excise.before_validate",
         "on_submit": "efris_integration.overrides.sales_invoice.on_submit",
         "on_cancel":  "efris_integration.overrides.sales_invoice.on_cancel",
     },
     # Sales Order / Delivery Note are not sent to URA: the Sales Invoice is the
     # fiscal document (sending them as T109 would fiscalise the sale twice).
+    "Sales Order": {
+        "before_validate": "efris_integration.excise.before_validate",
+    },
+    "Delivery Note": {
+        "before_validate": "efris_integration.excise.before_validate",
+    },
     "Stock Entry": {
         "on_submit": "efris_integration.overrides.stock_entry.on_submit",
     },

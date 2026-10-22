@@ -171,9 +171,14 @@ def get_item_efris_fields(item_code: str) -> dict:
         item_code,
         [
             "efris_goods_category_id",
-            "efris_excise_flag",
-            "efris_excise_rate",
-            "efris_excise_rate_usd",
+            "efris_have_excise_tax",       # "Yes" = excise liable (SAP U_CVT_EXERCISETAX 101)
+            "efris_excise_flag",           # legacy hidden check
+            "efris_excise_rate",           # % (beverage: UGX per litre)
+            "efris_excise_rate_usd",       # USD per tonne
+            "volume_per_unit",             # litres per unit (beverage)
+            "efris_excise_weight",         # T109 pack
+            "efris_piece_scaled_value",    # T109 stick
+            "efris_stick",
             "efris_excise_category_id",    # exciseDutyCode for categoryId (T109 API)
             "efris_excise_category_name",  # excise duty name for categoryName
             "efris_weight_unit",

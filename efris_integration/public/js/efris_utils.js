@@ -72,6 +72,55 @@ window.efris_confirm_and_call = function (frm, message, fn) {
 };
 
 
+// ── Live excise preview (Sales Order / Delivery Note / Sales Invoice) ─────────
+// Called from line events; asks the server to calculate excise on the unsaved
+// document (excise.preview_excise) and copies the line values back. The same
+// calculation runs again on save, so this is only for immediate feedback.
+window.efris_excise_preview = function (frm) {
+    try {
+        if (!frm || frm.doc.docstatus !== 0 || frm.__efris_excise_off || frm.__efris_excise_busy) return;
+        clearTimeout(frm.__efris_excise_timer);
+        frm.__efris_excise_timer = setTimeout(function () {
+            frappe.call({
+                method: "efris_integration.excise.preview_excise",
+                args: { doc: frm.doc },
+                callback: function (r) {
+                    var res = r.message || {};
+                    if (!res.enabled) { frm.__efris_excise_off = true; return; }
+                    frm.__efris_excise_busy = true;
+                    (res.rows || []).forEach(function (u) {
+                        var row = null;
+                        (frm.doc.items || []).forEach(function (x) { if (x.name === u.name) row = x; });
+                        if (!row) return;
+                        Object.keys(u.values).forEach(function (k) {
+                            var v = u.values[k];
+                            if (row[k] !== v && !(v === null && !row[k])) {
+                                frappe.model.set_value(row.doctype, row.name, k, v);
+                            }
+                        });
+                    });
+                    setTimeout(function () { frm.__efris_excise_busy = false; }, 800);
+                }
+            });
+        }, 500);
+    } catch (e) {
+        console.warn("EFRIS excise preview error:", e);
+    }
+};
+
+// Line fields that change the excise; used by the three form scripts.
+window.efris_excise_line_events = function () {
+    var handler = function (frm) { efris_excise_preview(frm); };
+    return {
+        item_code: handler,
+        qty: handler,
+        rate: handler,
+        discount_percentage: handler,
+        efris_gross_price: handler
+    };
+};
+
+
 // ── Open EFRIS Log list filtered to this document ─────────────────────────────
 window.efris_open_log = function (frm) {
     frappe.set_route("List", "EFRIS Log", {

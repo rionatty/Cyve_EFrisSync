@@ -19,6 +19,10 @@ def on_submit(doc, method):
     "Upload to EFRIS". Credit notes are always uploaded by hand (they need a
     reason). A failure never blocks the submit; the Upload button stays.
     """
+    # Excise duty journal entry first (SAP posts it before the upload); never blocks
+    from efris_integration.excise import auto_post_excise_journal
+    auto_post_excise_journal(doc)
+
     if doc.is_return:
         return
     # db check (not get_efris_settings): its frappe.throw would pop up a
@@ -44,7 +48,11 @@ def on_cancel(doc, method):
     T114 cancellation if approved). Never blocks the ERPNext cancel; on failure
     the user retries with EFRIS → Cancel in EFRIS.
     Normal invoice → warn: URA has no cancellation, issue a credit note.
+    Either way, the excise duty journal entry is cancelled with it.
     """
+    from efris_integration.excise import cancel_excise_journal
+    cancel_excise_journal(doc)
+
     if doc.is_return:
         if doc.get("efris_cn_reference_no") and doc.get("efris_cn_approval") in ("Pending", "Approved"):
             try:

@@ -31,6 +31,30 @@ SE_ISSUE_OR_TRANSFER = (
     "eval:in_list(['Material Issue','Send to Subcontractor','Material Transfer'], doc.stock_entry_type)"
 )
 
+# Excise duty on Sales Order / Delivery Note / Sales Invoice lines (SAP B1
+# INV1/DLN1/RDR1 U_CVT_* fields). Filled by excise.apply_excise on save;
+# copied along SO -> DN -> SI so the duty basis travels with the line.
+_EXCISE_LINE = [
+    {"fieldname": "efris_excise_section", "fieldtype": "Section Break", "label": "Excise Duty",
+     "collapsible": 1},
+    {"fieldname": "efris_gross_price", "fieldtype": "Currency", "label": "Gross Unit Price (incl. VAT)",
+     "options": "currency"},
+    {"fieldname": "efris_base_price", "fieldtype": "Currency", "label": "Price before Excise",
+     "options": "currency", "read_only": 1},
+    {"fieldname": "efris_excise_basis", "fieldtype": "Data", "label": "Excise Basis", "read_only": 1},
+    {"fieldname": "efris_excise_col", "fieldtype": "Column Break"},
+    {"fieldname": "efris_excise_per_unit", "fieldtype": "Currency", "label": "Excise per Unit",
+     "options": "currency", "read_only": 1},
+    {"fieldname": "efris_unit_price_incl_excise", "fieldtype": "Currency", "label": "Unit Price incl. Excise",
+     "options": "currency", "read_only": 1},
+    {"fieldname": "efris_excise_tax", "fieldtype": "Currency", "label": "Excise Duty",
+     "options": "currency", "read_only": 1},
+]
+EXCISE_LINE_FIELDS = [
+    dict(df, insert_after=prev["fieldname"] if i else "net_amount", module="EFRIS Integration")
+    for i, (prev, df) in enumerate(zip([{}] + _EXCISE_LINE[:-1], _EXCISE_LINE))
+]
+
 CUSTOM_FIELDS = {
 
     # ─── Sales Invoice (AR Invoice + Credit Note) ─────────────────────────
@@ -74,6 +98,9 @@ CUSTOM_FIELDS = {
         {"fieldname": "efris_fiscal_date",  "fieldtype": "Data",         "label": "EFRIS Fiscal Date",
          "read_only": 1, "no_copy": 1, "allow_on_submit": 1},
 
+        {"fieldname": "efris_excise_journal", "fieldtype": "Link",       "label": "Excise Journal Entry",
+         "options": "Journal Entry", "read_only": 1, "no_copy": 1, "allow_on_submit": 1},
+
         # ── Credit note application (shown on returns only) ───────────────
         {"fieldname": "efris_cn_section",   "fieldtype": "Section Break", "label": "Credit Note Application",
          "depends_on": "eval:doc.is_return"},
@@ -106,10 +133,7 @@ CUSTOM_FIELDS = {
          "insert_after": "efris_branch_id", "read_only": 1, "hidden": 1,
          "module": "EFRIS Integration"},
     ],
-    "Sales Invoice Item": [
-        {"fieldname": "efris_excise_tax", "fieldtype": "Currency", "label": "Excise Duty", "insert_after": "net_amount"},
-        {"fieldname": "efris_excise_per_unit", "fieldtype": "Currency", "label": "Excise Per Unit", "insert_after": "efris_excise_tax"},
-    ],
+    "Sales Invoice Item": EXCISE_LINE_FIELDS,
 
     # ─── Sales Order ──────────────────────────────────────────────────────
     "Sales Order": [
@@ -119,11 +143,8 @@ CUSTOM_FIELDS = {
         {"fieldname": "efris_submitted_at", "fieldtype": "Datetime", "label": "EFRIS Submitted At", "read_only": 1},
         {"fieldname": "efris_total_excise", "fieldtype": "Currency", "label": "Total Excise Duty", "read_only": 1},
     ],
-    "Sales Order Item": [
-        {"fieldname": "efris_excise_tax", "fieldtype": "Currency", "label": "Excise Duty"},
-        {"fieldname": "efris_unit_price_incl_excise", "fieldtype": "Currency", "label": "Unit Price incl. Excise"},
-        {"fieldname": "efris_gross_price", "fieldtype": "Currency", "label": "Gross Price"},
-    ],
+    "Sales Order Item": EXCISE_LINE_FIELDS,
+    "Delivery Note Item": EXCISE_LINE_FIELDS,
 
     # ─── Delivery Note ────────────────────────────────────────────────────
     "Delivery Note": [

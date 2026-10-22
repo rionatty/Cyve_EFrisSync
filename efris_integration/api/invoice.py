@@ -621,6 +621,8 @@ def _build_goods_and_tax(
 
         # ── Excise duty (unchanged rules; base = VAT-exclusive paid amount) ──
         excise_data = compute_excise_for_line(line, item_fields, settings, doc.currency)
+        # duty calculated on the line (excise.apply_excise); None = back it out below
+        line_excise = excise_data.pop("_line_tax", None)
         registered_for_excise = bool(getattr(settings, "has_local_excise_duty", False))
         if excise_data.get("exciseFlag") == "1" and not registered_for_excise:
             excise_data = {
@@ -630,8 +632,13 @@ def _build_goods_and_tax(
             }
         if excise_data.get("exciseFlag") == "1":
             excise_decimal = safe_float(excise_data.get("exciseRate") or "0")
-            if excise_decimal > 0:
+            if line_excise:
+                excise_tax_amount = round(line_excise, 2)
+            elif excise_decimal > 0 and excise_data.get("exciseRule") == "1":
                 excise_tax_amount = _trunc2(line_net * excise_decimal / (1 + excise_decimal))
+            else:
+                excise_tax_amount = 0.0
+            if excise_tax_amount:
                 excise_base = round(line_net - excise_tax_amount, 2)
                 excise_data["exciseTax"] = str(excise_tax_amount)
                 if "excise" not in tax_buckets:
