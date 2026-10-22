@@ -6,6 +6,7 @@
   "is_standard": "Yes",
   "module": "EFRIS Integration",
   "name": "EFRIS Submission Log",
+  "ref_doctype": "EFRIS Log",
   "report_name": "EFRIS Submission Log",
   "report_type": "Script Report",
   "roles": [{"role": "Accounts Manager"}, {"role": "System Manager"}]

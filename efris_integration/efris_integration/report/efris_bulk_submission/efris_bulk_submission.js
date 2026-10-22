@@ -29,6 +29,11 @@ frappe.query_reports["EFRIS Bulk Submission"] = {
         },
     ],
 
+    // Without the checkbox column get_checked_items() always returned nothing
+    get_datatable_options(options) {
+        return Object.assign(options, { checkboxColumn: true });
+    },
+
     onload(report) {
         report.page.add_inner_button(__("Submit Selected to EFRIS"), () => {
             const checked = frappe.query_report.get_checked_items();

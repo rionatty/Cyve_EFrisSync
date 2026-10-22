@@ -8,6 +8,7 @@
   "is_standard": "Yes",
   "module": "EFRIS Integration",
   "name": "EFRIS Bulk Submission",
+  "ref_doctype": "Sales Invoice",
   "report_name": "EFRIS Bulk Submission",
   "report_type": "Script Report",
   "roles": [{"role": "Accounts Manager"}, {"role": "System Manager"}]

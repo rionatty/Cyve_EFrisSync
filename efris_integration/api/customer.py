@@ -23,6 +23,47 @@ from efris_integration.api.session import ensure_session, SESSION_ERRORS
 from efris_integration.utils.helpers import log_efris
 
 
+def buyer_type_for(taxpayer: dict) -> str:
+    """SAP B1 BusinessPartner.cs: 201 → B2C; 202 + governmentTIN 1 → B2G; other 202 → B2B."""
+    kind = str(taxpayer.get("taxpayerType") or "").strip()
+    if kind == "201":
+        return "B2C"
+    if kind == "202":
+        return "B2G" if str(taxpayer.get("governmentTIN") or "").strip() == "1" else "B2B"
+    return ""
+
+
+@frappe.whitelist()
+def verify_customer(customer: str, company: str, update_name: int = 0) -> dict:
+    """
+    Verify one customer's TIN with URA (T119) and save what URA holds:
+    Business Type (B2B/B2C/B2G) and EFRIS Invoice Name (= URA legal name);
+    with update_name also the Customer Name. Customers without a TIN are
+    skipped. Used by the EFRIS Customer TIN Verification report (SAP B1
+    BulkBPVerify.cs).
+    """
+    from efris_integration.api.session import call_with_session
+
+    tin = (frappe.db.get_value("Customer", customer, "tax_id") or "").strip()
+    if not tin:
+        return {"skipped": "no TIN"}
+    client = EFRISClient(company=company)
+    result = call_with_session(client, company, "T119", {"tin": tin, "ninBrn": ""}, "Customer", customer) or {}
+    payer = result.get("taxpayer") or result
+    legal = str(payer.get("legalName") or payer.get("businessName") or "").strip()
+    btype = buyer_type_for(payer)
+    if not btype:
+        frappe.throw(f"URA returned an unknown taxpayer type '{payer.get('taxpayerType')}' for TIN {tin}.")
+
+    values = {"efris_business_type": btype, "efris_buyer_type": btype}
+    if legal:
+        values["efris_invoice_name"] = legal
+        if int(update_name or 0):
+            values["customer_name"] = legal
+    frappe.db.set_value("Customer", customer, values)
+    return {"tin": tin, "business_type": btype, "legal_name": legal}
+
+
 @frappe.whitelist()
 def verify_tin(tin: str, company: str) -> dict:
     """

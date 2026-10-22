@@ -1,6 +1,6 @@
 {
   "charts": [],
-  "content": "[{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>EFRIS Configuration</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"UOM Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"TaxCode Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Exchange Rate Sync\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Invoicing</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Order\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Delivery Note\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Stock Movements</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Receipt\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Entry\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Reconciliation\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports & Logs</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Bulk Submission\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Credit Notes\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Submission Log\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Log\",\"col\":3}}]",
+  "content": "[{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>EFRIS Configuration</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"UOM Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"TaxCode Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Exchange Rate Sync\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Invoicing</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Order\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Delivery Note\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Stock Movements</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Receipt\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Entry\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Reconciliation\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports & Logs</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Bulk Submission\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Credit Notes\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Item Upload\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Customer TIN Verification\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Submission Log\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Log\",\"col\":3}}]",
   "doctype": "Workspace",
   "hide_custom": 0,
   "is_hidden": 0,
@@ -136,8 +136,24 @@
       "link_to": "EFRIS Log",
       "name": "EFRIS Log",
       "type": "DocType"
+    },
+    {
+      "color": "Green",
+      "doc_view": "",
+      "label": "EFRIS Item Upload",
+      "link_to": "EFRIS Item Upload",
+      "name": "EFRIS Item Upload",
+      "type": "Report"
+    },
+    {
+      "color": "Green",
+      "doc_view": "",
+      "label": "EFRIS Customer TIN Verification",
+      "link_to": "EFRIS Customer TIN Verification",
+      "name": "EFRIS Customer TIN Verification",
+      "type": "Report"
     }
   ],
   "title": "EFRIS Integration",
-  "modified": "2026-10-23 00:00:00.000000"
+  "modified": "2026-10-24 00:00:00.000000"
 }

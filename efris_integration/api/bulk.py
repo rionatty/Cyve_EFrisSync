@@ -4,7 +4,10 @@ Bulk EFRIS submission — mirrors BulkPosting.cs
 Allows submitting a batch of documents (e.g. historical invoices) to EFRIS in one go.
 """
 
+import json
+
 import frappe
+from frappe.utils import strip_html
 
 from efris_integration.api.invoice import submit_sales_invoice
 from efris_integration.api.credit_note import submit_credit_note
@@ -17,12 +20,10 @@ def bulk_submit(doctype: str, names: list | str) -> dict:
     Submit multiple documents to EFRIS.
     names can be a JSON list string or a Python list.
     """
-    import json
 
     if isinstance(names, str):
         names = json.loads(names)
 
-    results = {"success": [], "failed": []}
     handler_map = {
         "Sales Invoice": _handle_sales_invoice,
         "Purchase Receipt": _handle_purchase_receipt,
@@ -33,20 +34,50 @@ def bulk_submit(doctype: str, names: list | str) -> dict:
     if not handler:
         frappe.throw(f"Bulk submission not supported for {doctype}.")
 
+    res = run_bulk(names, handler)
+    return {"success": [d["name"] for d in res["done"]], "failed": res["failed"]}
+
+
+@frappe.whitelist()
+def bulk_upload_items(names, company: str, mode: str = "register") -> dict:
+    """EFRIS Item Upload report: register new goods (T130 add) or update registered ones."""
+    from efris_integration.api.goods import _modify_goods, _register_goods
+
+    upload = _register_goods if mode == "register" else _modify_goods
+    return run_bulk(names, lambda name: upload(frappe.get_doc("Item", name), company))
+
+
+@frappe.whitelist()
+def bulk_verify_customers(names, company: str, update_name: int = 0) -> dict:
+    """EFRIS Customer TIN Verification report: T119 per customer (SAP BulkBPVerify)."""
+    from efris_integration.api.customer import verify_customer
+
+    return run_bulk(names, lambda name: verify_customer(name, company, update_name))
+
+
+def run_bulk(names, fn) -> dict:
+    """
+    Run fn(name) for each name, committing after each one so finished work is
+    kept if a later one fails. fn may return {"skipped": reason}.
+    Returns {"done": [...], "failed": [...], "skipped": [...]}; the per-document
+    pop-ups are dropped (the caller shows one summary).
+    """
+    names = json.loads(names) if isinstance(names, str) else (names or [])
+    out = {"done": [], "failed": [], "skipped": []}
     for name in names:
         try:
-            handler(name)
-            results["success"].append(name)
-        except Exception as e:
-            results["failed"].append({"name": name, "error": str(e)})
-            frappe.log_error(frappe.get_traceback(), f"EFRIS Bulk {doctype}: {name}")
-
-    frappe.db.commit()
-    frappe.msgprint(
-        f"Bulk EFRIS submission complete. "
-        f"Success: {len(results['success'])}, Failed: {len(results['failed'])}."
-    )
-    return results
+            result = fn(name)
+            if isinstance(result, dict) and result.get("skipped"):
+                out["skipped"].append({"name": name, "reason": result["skipped"]})
+            else:
+                out["done"].append({"name": name})
+            frappe.db.commit()
+        except Exception as exc:
+            frappe.log_error(frappe.get_traceback(), f"EFRIS bulk: {name}")
+            out["failed"].append({"name": name, "error": strip_html(str(exc))[:300]})
+        finally:
+            frappe.clear_messages()
+    return out
 
 
 def _handle_sales_invoice(name: str):
