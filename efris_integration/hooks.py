@@ -26,6 +26,9 @@ doc_events = {
     "EFRIS Settings": {
         "on_update": "efris_integration.api.t127.invalidate_cache",
     },
+    "Customer": {
+        "on_update": "efris_integration.overrides.customer.on_update",
+    },
     "Sales Invoice": {
         "on_submit": "efris_integration.overrides.sales_invoice.on_submit",
         "on_cancel":  "efris_integration.overrides.sales_invoice.on_cancel",
@@ -50,8 +53,8 @@ scheduler_events = {
         "efris_integration.api.exchange_rate.sync_exchange_rates_all_companies",
     ],
     "hourly": [
-        # Refreshes the EFRIS session AES key for ALL configured companies
-        # whose session key file is older than 7.5 hours.
+        # Keeps each company's EFRIS session key working: renews it only
+        # when URA no longer accepts it.
         "efris_integration.api.auth.refresh_session_if_needed",
     ],
 }

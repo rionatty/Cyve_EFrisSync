@@ -61,13 +61,15 @@ def submit_sales_invoice(invoice_name: str) -> dict:
     client.settings.branch_id   = settings.branch_id
     client.settings.branch_name = settings.branch_name
 
-    # T127 prefetch if enabled
+    # "Use T127": each line's commodity category comes from the goods as
+    # registered on URA (SAP B1 SendGoodsServiceEnquiry), not the Item field
+    categories = None
     if settings.use_t127:
-        from efris_integration.api.t127 import get_industry_config
+        from efris_integration.api.ura_data import goods_catalogue
         try:
-            get_industry_config(company=doc.company)
+            categories = {code: g.get("category") for code, g in goods_catalogue(doc.company).items()}
         except Exception as e:
-            frappe.log_error(str(e), "EFRIS T127 prefetch failed — continuing without")
+            frappe.log_error(str(e), "EFRIS T127 goods lookup failed — using Item categories")
 
     buyer = get_customer_efris_fields(doc.customer)
     _check_buyer(doc, buyer, client)
@@ -76,6 +78,7 @@ def submit_sales_invoice(invoice_name: str) -> dict:
         doc, settings,
         company=doc.company,
         deemed_projects=deemed_projects,
+        categories=categories,
     )
 
     # is_export: Customer EFRIS tab → Export field = "Y - Yes"
@@ -536,6 +539,7 @@ def _build_goods_and_tax(
     settings,
     company: str = "",
     deemed_projects: "dict | None" = None,
+    categories: "dict | None" = None,
 ) -> tuple[list, list, dict]:
     """
     Build goodsDetails, taxDetails, and summary for any invoice-like doc.
@@ -655,7 +659,8 @@ def _build_goods_and_tax(
                 tax_buckets["excise"]["gross"] += line_net
 
         # ── Goods entry ──────────────────────────────────────────────────────
-        goods_cat_id = item_fields.get("efris_goods_category_id") or "238"
+        goods_cat_id = ((categories or {}).get(line.item_code)
+                        or item_fields.get("efris_goods_category_id") or "238")
         if excise_data.get("exciseFlag") == "1":
             excise_cat_id   = item_fields.get("efris_excise_category_id") or goods_cat_id
             excise_cat_name = item_fields.get("efris_excise_category_name") or line.item_group or ""

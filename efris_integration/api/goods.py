@@ -6,6 +6,7 @@ Mirrors: ItemMaster.cs → btnAdd_Click() / btnUpdate_Click()
 """
 
 import re
+from fractions import Fraction
 
 import frappe
 
@@ -319,9 +320,68 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
         "remarks":            str(item.get("efris_item_remark") or ""),
     }
 
+    _add_unit_conversions(item, company, payload)
+
     if operation == "Update" and goods_id:
         # Include EFRIS internal goodsId only when available.
         # If empty, EFRIS identifies the item by goodsCode (ERPNext item code).
         payload["goodsId"] = goods_id
 
     return payload
+
+
+def _add_unit_conversions(item, company: str, payload: dict) -> None:
+    """
+    Other units from the Item's UOM conversions (SAP B1 ItemMaster.cs, UoM
+    group): with no manual piece unit, the smallest unit below the stock UOM
+    becomes the piece unit; the rest go to goodsOtherUnits. Units with no URA code, or the same
+    URA code as one already sent, are left out.
+    """
+    from efris_integration.utils.helpers import DEFAULT_URA_UOMS, get_mapped_ura_uom
+
+    price = float(payload.get("unitPrice") or 0)
+    used = {payload["measureUnit"]}
+    if payload["havePieceUnit"] == "101" and payload.get("pieceMeasureUnit"):
+        used.add(payload["pieceMeasureUnit"])
+
+    units, unmapped = [], []
+    for row in item.get("uoms") or []:
+        factor = float(row.get("conversion_factor") or 0)
+        if not row.get("uom") or row.get("uom") == item.stock_uom or factor <= 0:
+            continue
+        code = (str(get_mapped_ura_uom(row.uom, company) or "").strip()
+                or DEFAULT_URA_UOMS.get(row.uom, ""))[:3]
+        if not code:
+            unmapped.append(row.uom)
+            continue
+        if code in used:
+            continue
+        used.add(code)
+        units.append((factor, code))
+    if unmapped:
+        frappe.msgprint(f"Item {item.name}: {', '.join(unmapped)} not sent to URA. "
+                        "Map them in EFRIS UOM Mapping.", indicator="orange", alert=True)
+    if not units:
+        return
+
+    def scale(factor):
+        # factor stock units = 1 unit  ->  packageScaled stock units = otherScaled units
+        frac = Fraction(factor).limit_denominator(10 ** 6)
+        return str(frac.numerator), str(frac.denominator)
+
+    def num(v):
+        return f"{round(v, 8):.8f}".rstrip("0").rstrip(".")
+
+    if payload["havePieceUnit"] != "101" and min(units)[0] < 1:
+        factor, code = min(units)
+        units.remove((factor, code))
+        package, piece = scale(factor)
+        payload.update({"havePieceUnit": "101", "pieceMeasureUnit": code, "packageScaledValue": package,
+                        "pieceScaledValue": piece, "pieceUnitPrice": num(price * factor)})
+    if units:
+        payload["haveOtherUnit"] = "101"
+        payload["goodsOtherUnits"] = [
+            {"otherUnit": code, "otherPrice": num(price * factor),
+             "otherScaled": scale(factor)[1], "packageScaled": scale(factor)[0]}
+            for factor, code in units
+        ]

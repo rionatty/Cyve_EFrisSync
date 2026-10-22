@@ -115,7 +115,7 @@ def invoice_detail(company: str, fdn: str) -> dict:
 
 
 def goods_catalogue(company: str) -> dict:
-    """{goodsCode: {"id", "stock", "unit", "name"}} for every good registered on URA."""
+    """{goodsCode: {"id", "stock", "unit", "name", "category"}} for every good registered on URA."""
     key = f"efris_t127:{company}"
     cached = frappe.cache().get_value(key)
     if cached:
@@ -130,7 +130,8 @@ def goods_catalogue(company: str) -> dict:
             code = str(rec.get("goodsCode") or "").strip()
             if code:
                 goods[code] = {"id": str(rec.get("id") or "").strip(), "stock": flt(rec.get("stock")),
-                               "unit": rec.get("measureUnit") or "", "name": rec.get("goodsName") or ""}
+                               "unit": rec.get("measureUnit") or "", "name": rec.get("goodsName") or "",
+                               "category": str(rec.get("commodityCategoryCode") or "").strip()}
         if page >= (int(flt((result.get("page") or {}).get("pageCount"))) or 1):
             break
         page += 1
