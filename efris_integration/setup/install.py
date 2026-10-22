@@ -17,6 +17,8 @@ Field mapping rationale (SAP B1 UDF → ERPNext Custom Field):
   OWHS       → Warehouse
 """
 
+import copy
+
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
@@ -86,7 +88,7 @@ CUSTOM_FIELDS = {
 
     # ─── Sales Order ──────────────────────────────────────────────────────
     "Sales Order": [
-        {"fieldname": "efris_section", "fieldtype": "Section Break", "label": "EFRIS / URA", "insert_after": "tc_name", "collapsible": 1, "module": "EFRIS Integration"},
+        {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "EFRIS"},
         {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "EFRIS Invoice ID", "read_only": 1},
         {"fieldname": "efris_status", "fieldtype": "Select", "label": "EFRIS Status", "options": "\nPending\nSubmitted\nFailed", "read_only": 1},
         {"fieldname": "efris_submitted_at", "fieldtype": "Datetime", "label": "EFRIS Submitted At", "read_only": 1},
@@ -100,7 +102,7 @@ CUSTOM_FIELDS = {
 
     # ─── Delivery Note ────────────────────────────────────────────────────
     "Delivery Note": [
-        {"fieldname": "efris_section", "fieldtype": "Section Break", "label": "EFRIS / URA", "insert_after": "tc_name", "collapsible": 1, "module": "EFRIS Integration"},
+        {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "EFRIS"},
         {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "EFRIS Invoice ID", "read_only": 1},
         {"fieldname": "efris_antifake_code", "fieldtype": "Data", "label": "EFRIS Antifake Code", "read_only": 1},
         {"fieldname": "efris_status", "fieldtype": "Select", "label": "EFRIS Status", "options": "\nPending\nSubmitted\nFailed", "read_only": 1},
@@ -109,16 +111,16 @@ CUSTOM_FIELDS = {
 
     # ─── Purchase Receipt (GRPO) ──────────────────────────────────────────
     "Purchase Receipt": [
-        {"fieldname": "efris_section", "fieldtype": "Section Break", "label": "EFRIS / URA", "insert_after": "remarks", "collapsible": 1, "module": "EFRIS Integration"},
-        {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "EFRIS Invoice ID", "read_only": 1},
-        {"fieldname": "efris_status", "fieldtype": "Select", "label": "EFRIS Status", "options": "\nPending\nSubmitted\nFailed", "read_only": 1},
-        {"fieldname": "efris_submitted_at", "fieldtype": "Datetime", "label": "EFRIS Submitted At", "read_only": 1},
-        {"fieldname": "efris_col_break", "fieldtype": "Column Break"},
+        {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "EFRIS"},
         {"fieldname": "efris_stock_in_option", "fieldtype": "Select", "label": "EFRIS Stock-In Type",
          "options": "\n101\n102\n103\n104",
          "description": "101=Import, 102=Local Purchase, 103=Manufacture, 104=Opening Stock",
          "default": "102"},
         {"fieldname": "efris_supplier_tin", "fieldtype": "Data", "label": "Supplier TIN (EFRIS)"},
+        {"fieldname": "efris_col_break", "fieldtype": "Column Break"},
+        {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "EFRIS Invoice ID", "read_only": 1},
+        {"fieldname": "efris_status", "fieldtype": "Select", "label": "EFRIS Status", "options": "\nPending\nSubmitted\nFailed", "read_only": 1},
+        {"fieldname": "efris_submitted_at", "fieldtype": "Datetime", "label": "EFRIS Submitted At", "read_only": 1},
     ],
 
     # ─── Stock Entry ──────────────────────────────────────────────────────
@@ -210,7 +212,7 @@ CUSTOM_FIELDS = {
 
     # ─── Stock Reconciliation ─────────────────────────────────────────────
     "Stock Reconciliation": [
-        {"fieldname": "efris_section", "fieldtype": "Section Break", "label": "EFRIS / URA", "insert_after": "remarks", "collapsible": 1, "module": "EFRIS Integration"},
+        {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "EFRIS"},
         {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "EFRIS Invoice ID", "read_only": 1},
         {"fieldname": "efris_status", "fieldtype": "Select", "label": "EFRIS Status", "options": "\nPending\nSubmitted\nFailed", "read_only": 1},
         {"fieldname": "efris_submitted_at", "fieldtype": "Datetime", "label": "EFRIS Submitted At", "read_only": 1},
@@ -382,16 +384,15 @@ CUSTOM_FIELDS = {
     # inline on the form (visible without opening any menu).
     # Old fields kept hidden so invoice.py (_buyer_details) still works.
     "Customer": [
+        # ── Tab Break ─────────────────────────────────────────────────────
+        {"fieldname": "efris_tab",          "fieldtype": "Tab Break", "label": "EFRIS",
+         "module": "EFRIS Integration"},
+
         # ── Verify TIN button — kept hidden; toolbar button used instead ───
         # (Button-type custom field; JS adds it to the form toolbar via
         #  frm.add_custom_button so it appears next to Save / Actions.)
         {"fieldname": "efris_verify_tin_btn", "fieldtype": "Button", "label": "Verify TIN",
-         "insert_after": "tax_id",            "module": "EFRIS Integration",
-         "hidden": 1},
-
-        # ── Tab Break ─────────────────────────────────────────────────────
-        {"fieldname": "efris_tab",          "fieldtype": "Tab Break", "label": "EFRIS",
-         "insert_after": "efris_verify_tin_btn", "module": "EFRIS Integration"},
+         "module": "EFRIS Integration", "hidden": 1},
 
         # ── Visible fields (SAP B1 EFRIS tab layout) ──────────────────────
         {"fieldname": "efris_export",       "fieldtype": "Select",    "label": "Export",
@@ -431,7 +432,7 @@ CUSTOM_FIELDS = {
 
     # ─── Supplier ────────────────────────────────────────────────────────
     "Supplier": [
-        {"fieldname": "efris_section", "fieldtype": "Section Break", "label": "EFRIS / URA", "insert_after": "tax_id", "collapsible": 1, "module": "EFRIS Integration"},
+        {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "EFRIS"},
         {"fieldname": "efris_nin_brn", "fieldtype": "Data", "label": "NIN / BRN"},
     ],
 
@@ -442,8 +443,7 @@ CUSTOM_FIELDS = {
     #   URA Branch Id  — URA branch identifier for this warehouse
     #   URA Branch Name — Human-readable URA branch name
     "Warehouse": [
-        {"fieldname": "efris_section",      "fieldtype": "Section Break", "label": "URA",
-         "insert_after": "company",         "collapsible": 0,
+        {"fieldname": "efris_section",      "fieldtype": "Tab Break",     "label": "URA",
          "module": "EFRIS Integration"},
 
         {"fieldname": "efris_ura_warehouse","fieldtype": "Select",         "label": "URA Warehouse",
@@ -467,9 +467,50 @@ CUSTOM_FIELDS = {
 }
 
 
+# Every header doctype gets its EFRIS fields in one tab. The list for each
+# doctype must start with its Tab Break; _build_custom_fields() then chains
+# insert_after so the fields stay in list order inside that tab.
+# None = put the tab after the doctype's last standard field (end of the form),
+# so it never swallows standard fields that follow the anchor.
+EFRIS_TAB_ANCHORS = {
+    "Sales Invoice":        None,
+    "Sales Order":          None,
+    "Delivery Note":        None,
+    "Purchase Receipt":     None,
+    "Stock Entry":          None,
+    "Stock Reconciliation": None,
+    "Customer":             None,
+    "Supplier":             None,
+    "Warehouse":            None,
+    # Item keeps its tab between the second Details tab and Inventory.
+    "Item":                 "item_defaults",
+}
+
+
+def _last_standard_field(doctype: str) -> str:
+    return frappe.get_all(
+        "DocField",
+        filters={"parent": doctype, "parenttype": "DocType"},
+        pluck="fieldname",
+        order_by="idx desc",
+        limit=1,
+    )[0]
+
+
+def _build_custom_fields() -> dict:
+    fields = copy.deepcopy(CUSTOM_FIELDS)
+    for doctype, anchor in EFRIS_TAB_ANCHORS.items():
+        prev = anchor or _last_standard_field(doctype)
+        for df in fields[doctype]:
+            df["insert_after"] = prev
+            df.setdefault("module", "EFRIS Integration")
+            prev = df["fieldname"]
+    return fields
+
+
 def after_install():
     _remove_obsolete_fields()
-    create_custom_fields(CUSTOM_FIELDS, ignore_validate=True)
+    create_custom_fields(_build_custom_fields(), ignore_validate=True)
     frappe.db.commit()
     frappe.msgprint("EFRIS Integration: Custom fields installed successfully.")
 
