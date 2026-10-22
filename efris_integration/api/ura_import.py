@@ -15,6 +15,7 @@ notes are marked as approved with their own FDN, verification code and QR.
 
 Lines come from T108. Each URA goods code is matched to an item by EFRIS Item
 Mapping (party TIN first, then any party), then by an item with the same code.
+A mapping's account, when set, becomes the line's income / expense account.
 URA prices are VAT-inclusive; the draft gets the VAT-exclusive rate and the
 company's default tax template (returns keep the original's taxes), for
 review before submitting.
@@ -83,9 +84,13 @@ def create_draft(company: str, direction: str, fdn: str) -> dict:
             doc.customer = party
         else:
             doc.supplier = party
+        account_field = "income_account" if sales else "expense_account"
         for l in lines:
-            doc.append("items", {"item_code": l["item_code"], "qty": l["qty"],
-                                 "rate": flt(l["amount"] / l["qty"], 4), "description": l["description"]})
+            row = {"item_code": l["item_code"], "qty": l["qty"],
+                   "rate": flt(l["amount"] / l["qty"], 4), "description": l["description"]}
+            if l.get("account"):
+                row[account_field] = l["account"]
+            doc.append("items", row)
     doc.posting_date = issued
     doc.set_posting_time = 1
     if sales:
@@ -129,7 +134,8 @@ def _goods_lines(detail, company, direction, tin, credit_note) -> list:
             unmapped.append(f"{code} ({g.get('item') or ''})")
             continue
         lines.append({"item_code": item, "qty": abs(flt(g.get("qty"))) or 1, "amount": amount,
-                      "description": g.get("item") or code})
+                      "description": g.get("item") or code,
+                      "account": find_item(company, direction, tin, code, field="account")})
     if unmapped:
         frappe.throw("Map these URA goods codes in <b>EFRIS Item Mapping</b>: " + ", ".join(unmapped))
     if not lines:
@@ -202,15 +208,18 @@ def find_party(doctype: str, tin: str, name: str):
     return None
 
 
-def find_item(company: str, direction: str, tin: str, code: str):
+def find_item(company: str, direction: str, tin: str, code: str, field: str = "item_code"):
+    """Mapped item (or, with field="account", the mapping's account) for a URA goods code."""
     if not code:
         return None
     for party_tin in ([tin] if tin else []) + [""]:
         filters = {"company": company, "direction": direction, "ura_goods_code": code}
         filters["party_tin"] = party_tin if party_tin else ["is", "not set"]
-        item = frappe.db.get_value("EFRIS Item Mapping", filters, "item_code")
-        if item:
-            return item
+        value = frappe.db.get_value("EFRIS Item Mapping", filters, field)
+        if value:
+            return value
+    if field != "item_code":
+        return None
     return code if frappe.db.exists("Item", code) else None
 
 

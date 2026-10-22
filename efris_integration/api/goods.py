@@ -116,6 +116,8 @@ def _register_goods(item, company: str) -> dict:
             or result.get("commodityGoodsId") or result.get("id") or ""
         ).strip()
 
+    goods_id = goods_id or _lookup_goods_id(client, company, item)
+
     # ── Write back to Item ─────────────────────────────────────────────────
     success_remark = "Good WOA! Item Created Successfully on URA EFRIS."
     updates = {
@@ -220,6 +222,9 @@ def _modify_goods(item, company: str) -> dict:
             or result.get("commodityGoodsId") or result.get("id") or ""
         ).strip()
 
+    if not goods_id_new and not item.get("efris_reference_no"):
+        goods_id_new = _lookup_goods_id(client, company, item)
+
     # ── Write back to Item ─────────────────────────────────────────────────
     success_remark = "Good WOA! Item Updated Successfully on URA EFRIS."
     updates = {
@@ -240,6 +245,27 @@ def _modify_goods(item, company: str) -> dict:
 
     frappe.msgprint(msg, title="Item Updated on EFRIS", indicator="green")
     return {"status": "ok", "goods_id": goods_id_new, "message": msg}
+
+
+def _lookup_goods_id(client, company: str, item) -> str:
+    """
+    URA goods ID by goods code (T127) when T130 does not return it (SAP B1
+    ItemMaster.cs). Never fails the registration; "" when not found.
+    """
+    from efris_integration.api.session import call_with_session
+
+    try:
+        frappe.cache().delete_value(f"efris_t127:{company}")   # catalogue now has this item
+        result = call_with_session(client, company, "T127",
+                                   {"goodsCode": item.item_code, "pageNo": "1", "pageSize": "10"},
+                                   "Item", item.name) or {}
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), f"EFRIS goods ID lookup {item.name}")
+        return ""
+    for rec in result.get("records") or []:
+        if str(rec.get("goodsCode") or "").strip() == item.item_code:
+            return str(rec.get("id") or "").strip()
+    return ""
 
 
 # ─── EFRIS Log helper ─────────────────────────────────────────────────────────

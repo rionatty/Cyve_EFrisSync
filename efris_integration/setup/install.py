@@ -74,6 +74,13 @@ CUSTOM_FIELDS = {
         {"fieldname": "efris_fiscal_date",  "fieldtype": "Data",         "label": "EFRIS Fiscal Date",
          "read_only": 1, "no_copy": 1, "allow_on_submit": 1},
 
+        # ── Route sale: already fiscalised on a handheld device ───────────
+        {"fieldname": "efris_route_sale",   "fieldtype": "Check",        "label": "Route Sale",
+         "no_copy": 1, "allow_on_submit": 1, "depends_on": "eval:!doc.is_return"},
+        {"fieldname": "efris_route_fdn",    "fieldtype": "Data",         "label": "Device FDN",
+         "no_copy": 1, "allow_on_submit": 1, "depends_on": "eval:doc.efris_route_sale",
+         "read_only_depends_on": "eval:doc.efris_invoice_id"},
+
         # ── Credit note application (shown on returns only) ───────────────
         {"fieldname": "efris_cn_section",   "fieldtype": "Section Break", "label": "Credit Note Application",
          "depends_on": "eval:doc.is_return"},

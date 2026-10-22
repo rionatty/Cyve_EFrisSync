@@ -6,6 +6,7 @@ Mirrors: BulkPosting.cs
 
 Supported doctypes:
   - Sales Invoice  (normal + credit notes)
+  - Route Sales    (fiscalised on a device: Get Invoice ID by FDN, T108)
   - Purchase Receipt
   - Stock Entry    (Material Receipt, Material Issue, Manufacture, Material Transfer for Manufacture)
 """
@@ -32,14 +33,16 @@ def execute(filters=None):
 def get_columns(doctype):
     base = [
         {"label": "Document", "fieldname": "name", "fieldtype": "Link",
-         "options": doctype, "width": 180},
+         "options": "Sales Invoice" if doctype == "Route Sales" else doctype, "width": 180},
         {"label": "Date", "fieldname": "posting_date", "fieldtype": "Date", "width": 100},
         {"label": "Amount", "fieldname": "grand_total", "fieldtype": "Currency", "width": 130},
         {"label": "EFRIS Status", "fieldname": "efris_status", "fieldtype": "Data", "width": 120},
     ]
-    if doctype == "Sales Invoice":
+    if doctype in ("Sales Invoice", "Route Sales"):
         base.insert(2, {"label": "Customer", "fieldname": "customer", "fieldtype": "Link",
                         "options": "Customer", "width": 160})
+    if doctype == "Route Sales":
+        base.insert(3, {"label": "Device FDN", "fieldname": "efris_route_fdn", "fieldtype": "Data", "width": 150})
     elif doctype in ("Purchase Receipt",):
         base.insert(2, {"label": "Supplier", "fieldname": "supplier", "fieldtype": "Link",
                         "options": "Supplier", "width": 160})
@@ -57,8 +60,21 @@ def get_data(doctype, from_date, to_date, companies):
             FROM `tabSales Invoice`
             WHERE docstatus = 1
               AND (efris_invoice_id IS NULL OR efris_invoice_id = '')
+              AND IFNULL(efris_route_sale, 0) = 0
               AND NOT (is_return = 1 AND IFNULL(efris_cn_reference_no, '') != ''
                        AND IFNULL(efris_cn_approval, '') NOT IN ('Rejected', 'Voided'))
+              AND company IN %(companies)s
+              AND posting_date BETWEEN %(from_date)s AND %(to_date)s
+            ORDER BY posting_date DESC
+        """, {"from_date": from_date, "to_date": to_date, "companies": tuple(companies)}, as_dict=True)
+
+    elif doctype == "Route Sales":
+        return frappe.db.sql("""
+            SELECT name, posting_date, customer, efris_route_fdn, grand_total, efris_status
+            FROM `tabSales Invoice`
+            WHERE docstatus = 1
+              AND efris_route_sale = 1
+              AND IFNULL(efris_invoice_id, '') = ''
               AND company IN %(companies)s
               AND posting_date BETWEEN %(from_date)s AND %(to_date)s
             ORDER BY posting_date DESC

@@ -84,6 +84,7 @@ STOCK_IN_MANUFACTURE = "103"
 STOCK_IN_OPENING = "104"
 
 REMARKS_MAX = 1000   # URA limit is 1024 bytes
+RECORD_PAGES = 3     # T147 / T149 pages searched for an upload's reference
 
 
 # ─── Whitelisted entry points ─────────────────────────────────────────────────
@@ -456,8 +457,57 @@ def _t139_parts(doc, settings) -> list:
             "goodsStockTransferItem": items,
         }
         key = f"TRANSFER {src[1] or src[0]} > {dst[1] or dst[0]}"
-        parts.append((key, lambda p=payload, b=src: _send(doc, "T139", p, b)))
+        parts.append((key, lambda p=payload, b=src: _send_transfer(doc, p, b)))
     return parts
+
+
+def _send_transfer(doc, payload: dict, branch: tuple) -> str:
+    """
+    T139 with SAP B1's guards (InventoryTransfer.cs): a transfer URA already
+    holds for this document (T183 list → T184 remarks) is not sent twice, and
+    after sending, the URA reference comes from T183 when T139 gives none.
+    """
+    existing = _ura_transfer(doc, payload, branch, match_marker=True)
+    if existing is not None:
+        return existing or "already on URA"
+    return _send(doc, "T139", payload, branch) or _ura_transfer(doc, payload, branch) or ""
+
+
+def _ura_transfer(doc, payload: dict, branch: tuple, match_marker: bool = False):
+    """
+    match_marker: reference of the day's transfer whose remarks carry this
+    document's marker, or None. Otherwise: reference of the latest transfer
+    for the same branches and vehicle today, or "".
+    Lookup failures never block the transfer.
+    """
+    from frappe.utils import nowdate
+
+    head = payload["goodsStockTransfer"]
+    marker = str(head.get("remarks") or "").split(" | ")[0].strip()
+    day = str(doc.get("posting_date") or nowdate()) if match_marker else nowdate()
+    client = EFRISClient(company=doc.company)
+    client.settings.branch_id, client.settings.branch_name = branch[0], branch[1]
+    query = {"startDate": day, "endDate": day, "pageNo": "1", "pageSize": "99"}
+    if not match_marker:
+        query.update(sourceBranchId=head["sourceBranchId"], destinationBranchId=head["destinationBranchId"],
+                     vehicleNo=head.get("vehicleNo") or "")
+    try:
+        records = (call_with_session(client, doc.company, "T183", query, doc.doctype, doc.name) or {}).get("records") or []
+        if not match_marker:
+            return str((records[0] if records else {}).get("referenceNo") or "").strip()
+        for rec in records:
+            if not rec.get("id"):
+                continue
+            detail = call_with_session(client, doc.company, "T184", {"id": str(rec["id"])},
+                                       doc.doctype, doc.name) or {}
+            transfer = detail.get("goodsStockTransfer") or {}
+            if (marker and marker in str(transfer.get("remarks") or "")
+                    and str(transfer.get("sourceBranchId") or head["sourceBranchId"]) == head["sourceBranchId"]
+                    and str(transfer.get("destinationBranchId") or head["destinationBranchId"]) == head["destinationBranchId"]):
+                return str(rec.get("referenceNo") or "").strip()
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), f"EFRIS transfer lookup {doc.name}")
+    return None if match_marker else ""
 
 
 # ─── Running parts and recording the result ──────────────────────────────────
@@ -530,7 +580,64 @@ def _send(doc, code: str, payload: dict, branch: tuple) -> str:
     errors = _line_errors(result)
     if errors:
         raise EFRISAPIError("LINE", "; ".join(errors))
-    return _reference(result)
+    reference = _envelope_reference(client) or _reference(result)
+    if not reference and code == "T131":
+        reference = _find_ura_record(client, doc, payload)
+    return reference
+
+
+def _envelope_reference(client) -> str:
+    """URA's spec puts the T131 reference in globalInfo.extendField.referenceNo."""
+    envelope = getattr(client, "last_envelope", None) or {}
+    extend = ((envelope.get("globalInfo") or {}).get("extendField") or {}) if isinstance(envelope, dict) else {}
+    return str(extend.get("referenceNo") or "").strip() if isinstance(extend, dict) else ""
+
+
+def _find_ura_record(client, doc, payload) -> str:
+    """
+    Reference of a T131 upload when the reply has none (SAP B1 ClsStockRef):
+    stock-in → T147 stock records, stock-out → T149 adjust records, matched by
+    the "ERPNext <doctype>#: <name>" marker the upload put in its remarks.
+    Returns "" when not found; the upload itself already succeeded.
+    """
+    header = payload.get("goodsStockIn") or {}
+    marker = str(header.get("remarks") or "").split(" | ")[0].strip()
+    if not marker:
+        return ""
+    from frappe.utils import add_days, flt, getdate, nowdate
+
+    stock_in = header.get("operationType") == STOCK_IN
+    code = "T147" if stock_in else "T149"
+    today = getdate(nowdate())
+    keyword = ""
+    page = 1
+    while page <= RECORD_PAGES:
+        body = {"startDate": str(add_days(today, -1)), "endDate": str(add_days(today, 1)),
+                "pageNo": str(page), "pageSize": "99"}
+        if stock_in and header.get("stockInType"):
+            body["stockInType"] = header["stockInType"]
+        if keyword:
+            body["combineKeywords"] = keyword[:50]
+        try:
+            result = call_with_session(client, doc.company, code, body, doc.doctype, doc.name) or {}
+        except EFRISAPIError as exc:
+            # URA sometimes insists on a keyword (2879): retry with the supplier name
+            if exc.code == "2879" and not keyword and header.get("supplierName"):
+                keyword, page = str(header["supplierName"]).strip(), 1
+                continue
+            return ""
+        except Exception:
+            return ""
+        records = result.get("records") or []
+        for rec in records:
+            remarks = str(rec.get("remarks") or "").strip()
+            if remarks == marker or remarks.startswith(marker + " "):
+                return str(rec.get("referenceNo") or "").strip()
+        page_count = int(flt((result.get("page") or {}).get("pageCount")) or 1)
+        if len(records) < 99 or page >= page_count:
+            break
+        page += 1
+    return ""
 
 
 def _line_errors(result) -> list:

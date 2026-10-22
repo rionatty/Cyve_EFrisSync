@@ -180,7 +180,8 @@ def sign_in(company: str) -> dict:
         T103.Device, T103.Taxpayer, T103.TaxpayerBranch, T103.TaxTypes, …
 
     NO username/password is sent. Authentication is via the RSA key exchange.
-    TIN and TaxpayerID in settings are updated from the response if present.
+    Empty TIN / Taxpayer ID in settings are filled from the response; a TIN
+    that differs from URA's is kept (Test Connection warns about it, as SAP B1).
     """
     client   = EFRISClient(company=company)
     settings = client.settings
@@ -192,12 +193,13 @@ def sign_in(company: str) -> dict:
     if isinstance(taxpayer, dict):
         tin   = taxpayer.get("tin", "") or taxpayer.get("taxpayerTin", "")
         tp_id = taxpayer.get("taxpayerId", "") or taxpayer.get("taxPayerID", "")
-        if tin:
+        if tin and not settings.get("tin"):
             settings.db_set("tin", tin, update_modified=False)
-        if tp_id:
+        if tp_id and not settings.get("taxpayer_id"):
             settings.db_set("taxpayer_id", tp_id, update_modified=False)
 
-    return {"status": "OK", "taxpayer": taxpayer}
+    return {"status": "OK", "taxpayer": taxpayer,
+            "branch": result.get("taxpayerBranch") or {}, "device": result.get("device") or {}}
 
 
 # ─── T104: Get Session AES Key ────────────────────────────────────────────

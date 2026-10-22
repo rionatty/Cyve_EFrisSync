@@ -55,6 +55,13 @@ def bulk_verify_customers(names, company: str, update_name: int = 0) -> dict:
     return run_bulk(names, lambda name: verify_customer(name, company, update_name))
 
 
+@frappe.whitelist()
+def bulk_route_sale_ids(names) -> dict:
+    """Get Invoice ID for many route-sale invoices (SAP B1 BulkPosting GETID)."""
+    from efris_integration.api.invoice import get_route_sale_invoice_id
+    return run_bulk(names, get_route_sale_invoice_id)
+
+
 def run_bulk(names, fn) -> dict:
     """
     Run fn(name) for each name, committing after each one so finished work is

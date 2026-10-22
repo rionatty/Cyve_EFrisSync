@@ -11,7 +11,8 @@
   "column_break",
   "ura_goods_code",
   "ura_goods_name",
-  "item_code"
+  "item_code",
+  "account"
  ],
  "fields": [
   {"fieldname": "company", "fieldtype": "Link", "label": "Company", "options": "Company", "reqd": 1, "in_standard_filter": 1},
@@ -21,9 +22,10 @@
   {"fieldname": "column_break", "fieldtype": "Column Break"},
   {"fieldname": "ura_goods_code", "fieldtype": "Data", "label": "URA Goods Code", "reqd": 1, "in_list_view": 1, "in_standard_filter": 1},
   {"fieldname": "ura_goods_name", "fieldtype": "Data", "label": "URA Goods Name"},
-  {"fieldname": "item_code", "fieldtype": "Link", "label": "Item", "options": "Item", "reqd": 1, "in_list_view": 1}
+  {"fieldname": "item_code", "fieldtype": "Link", "label": "Item", "options": "Item", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "account", "fieldtype": "Link", "label": "Income / Expense Account", "options": "Account"}
  ],
- "modified": "2026-10-24 00:00:00.000000",
+ "modified": "2026-10-27 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "EFRIS Integration",
  "name": "EFRIS Item Mapping",

@@ -11,6 +11,7 @@ class EFRISSettings(Document):
         self._validate_required_fields()
         self._clean_keys()
         self._validate_industry_flags()
+        self._warn_setup_problems()
 
     def on_update(self):
         # Invalidate T127 in-memory cache whenever settings change
@@ -42,6 +43,21 @@ class EFRISSettings(Document):
             if val:
                 self.set(field, val.strip())
 
+    def _warn_setup_problems(self):
+        """SAP B1 URASetting checks. Warnings only, so the settings still save."""
+        problems = []
+        url = (self.get("api_url") or "").strip()
+        if url and not url.lower().startswith(("http://", "https://")):
+            problems.append("URL should start with https://")
+        tin, device = (self.get("tin") or "").strip(), (self.get("device_no") or "").strip()
+        if tin and device and not device.startswith(tin):
+            problems.append(f"Device No {device} does not start with the TIN {tin}")
+        if not (self.get("private_key") or "").strip():
+            problems.append("Private Key is empty: URA calls cannot be signed")
+        if problems:
+            frappe.msgprint("<br>".join(frappe.utils.escape_html(p) for p in problems),
+                            title="EFRIS Settings saved with warnings", indicator="orange")
+
     def _validate_industry_flags(self):
         if self.alcohol_industry and self.beverage_industry:
             frappe.throw(
@@ -55,15 +71,40 @@ class EFRISSettings(Document):
 
 @frappe.whitelist()
 def test_connection(company: str) -> dict:
-    """Test the EFRIS API connection for the given company (T101)."""
-    _get_settings(company)  # validates it exists
+    """
+    SAP B1 Test Connection: server time (T101), sign in (T103) for the
+    taxpayer, branch and device URA holds, then a session key (T104).
+    Warns when URA's TIN is not the one in these settings.
+    """
+    from frappe.utils import escape_html
+
+    from efris_integration.api.auth import get_symmetric_key, sign_in
     from efris_integration.api.base import EFRISClient
-    client = EFRISClient(company=company)
+
+    settings = _get_settings(company)
+    rows = []
     try:
-        result = client.call("T101", {}, doc_type="EFRIS Settings", doc_name=company)
-        return {"success": True, "message": f"Connection successful. Server time: {result}"}
+        server_time = EFRISClient(company=company).call("T101", {}, doc_type="EFRIS Settings", doc_name=company)
+        rows.append(("Server time", server_time.get("currentTime") if isinstance(server_time, dict) else server_time))
+        info = sign_in(company)
+        payer, branch, device = info.get("taxpayer") or {}, info.get("branch") or {}, info.get("device") or {}
+        ura_tin = str(payer.get("tin") or payer.get("taxpayerTin") or "").strip()
+        rows += [("Taxpayer", payer.get("legalName") or payer.get("businessName")), ("TIN", ura_tin),
+                 ("Branch", branch.get("branchName") or branch.get("branchId")),
+                 ("Device", device.get("deviceNo") or settings.get("device_no"))]
+        get_symmetric_key(company, force=True)   # T103 reset the session
+        rows.append(("Session key", "OK"))
     except Exception as e:
-        return {"success": False, "message": str(e)}
+        return {"success": False, "message": escape_html(str(e))}
+
+    html = "<table class='table table-bordered table-sm'>" + "".join(
+        f"<tr><td>{escape_html(k)}</td><td>{escape_html(str(v or '-'))}</td></tr>" for k, v in rows) + "</table>"
+    own_tin = (settings.get("tin") or "").strip()
+    if ura_tin and own_tin and ura_tin != own_tin:
+        html += (f"<p class='text-danger'>URA signed this device in as TIN {escape_html(ura_tin)}, "
+                 f"but these settings have TIN {escape_html(own_tin)}. Check the TIN and Device No.</p>")
+        return {"success": False, "message": html}
+    return {"success": True, "message": html}
 
 
 @frappe.whitelist()

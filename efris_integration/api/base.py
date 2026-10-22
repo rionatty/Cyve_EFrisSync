@@ -95,6 +95,7 @@ class EFRISClient:
 
         # ── Send ───────────────────────────────────────────────────────
         response = self._http_post(request_body)
+        self.last_envelope = response   # globalInfo.extendField.referenceNo (T131)
 
         return_code = response.get("returnStateInfo", {}).get("returnCode", "")
         return_msg  = response.get("returnStateInfo", {}).get("returnMessage", "")

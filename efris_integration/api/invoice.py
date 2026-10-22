@@ -42,6 +42,8 @@ def submit_sales_invoice(invoice_name: str) -> dict:
         frappe.throw("Invoice must be submitted before sending to EFRIS.")
     if doc.get("efris_invoice_id"):
         frappe.throw(f"Invoice already submitted to EFRIS (ID: {doc.efris_invoice_id}).")
+    if doc.get("efris_route_sale"):
+        frappe.throw("This is a route sale, already fiscalised on the device. Use <b>Get Invoice ID</b>.")
 
     settings = get_efris_settings(doc.company)
     _validate_settings(settings)          # friendly error before hitting URA
@@ -154,6 +156,36 @@ def fetch_invoice_from_ura(invoice_name: str) -> dict:
     return {"status": "not_found",
             "message": f"URA has no invoice with reference {invoice_name} yet. "
                        "If you just uploaded it, try again in a few moments."}
+
+
+@frappe.whitelist()
+def get_route_sale_invoice_id(invoice_name: str) -> dict:
+    """
+    Route sale (SAP B1 BulkPosting "Get Invoice ID"): the invoice was already
+    fiscalised on a handheld device, so it is never uploaded. Read it from URA
+    by the device FDN (T108) and save its Invoice ID, verification code and QR.
+    """
+    doc = frappe.get_doc("Sales Invoice", invoice_name)
+    if not doc.get("efris_route_sale"):
+        frappe.throw("Tick <b>Route Sale</b> first: only route sales are fetched by FDN.")
+    if doc.get("efris_invoice_id"):
+        return {"skipped": f"already has Invoice ID {doc.efris_invoice_id}"}
+    fdn = (doc.get("efris_route_fdn") or "").strip()
+    if not fdn:
+        frappe.throw("Enter the <b>Device FDN</b> printed on the device receipt.")
+
+    client = EFRISClient(company=doc.company)
+    detail = call_with_session(client, doc.company, "T108", {"invoiceNo": fdn}, "Sales Invoice", doc.name) or {}
+    basic = detail.get("basicInformation") or {}
+    if not str(basic.get("invoiceId") or "").strip():
+        frappe.throw(f"URA has no invoice with FDN {fdn}.")
+    other = frappe.db.get_value("Sales Invoice", {"efris_fdn_number": fdn, "name": ["!=", doc.name],
+                                                  "docstatus": ["<", 2]})
+    if other:
+        frappe.throw(f"FDN {fdn} already belongs to {other}.")
+    _save_result(doc, detail)
+    doc.reload()
+    return {"invoice_id": doc.get("efris_invoice_id") or "", "fdn": fdn}
 
 
 # ─── T106: Query Invoices ─────────────────────────────────────────────────
@@ -556,6 +588,8 @@ def _build_goods_and_tax(
       • deemed VAT customer  → deemedFlag 1, tax 0, item "(Deemed)", URA project
                                from T137 (deemed_projects, only when uploading)
       • out of scope ("00")  → vatApplicableFlag 0, taxRate "0", category 11
+      • export customer      → every line zero-rated (02, "Export Invoice"),
+                               no excise; foreign (B2F) buyers pay no excise
       • orderNumber          → 0-based, one per entry (items and discount lines)
 
     Read-only (no URA calls), so the print format can call it too.
@@ -566,6 +600,8 @@ def _build_goods_and_tax(
     _company = company or doc.company or ""
     buyer = get_customer_efris_fields(doc.customer) if doc.get("customer") else {}
     deemed = _is_deemed(buyer)
+    export = (buyer.get("efris_export") or "").startswith("Y")
+    no_excise = export or buyer.get("efris_business_type") == "B2F"
     tax_included_in_rate = _is_tax_included_in_rate(doc)
     invoice_discount = abs(safe_float(doc.get("discount_amount"))) > 0.0001
     # Excise from the invoice's excise tax row, per line: (amount, rate %)
@@ -576,9 +612,11 @@ def _build_goods_and_tax(
         item_fields = get_item_efris_fields(line.item_code)
         uom_code = map_uom(line.uom, _company)
         tax_rate, cat_code, cat_name, ura_rate_str, _erp_tax = _resolve_line_tax(doc, line, _company)
+        if export:
+            tax_rate, cat_code, cat_name, ura_rate_str = 0.0, "02", "Zero-rated", "0"
         out_of_scope = cat_code == "11"
         qty = safe_float(line.qty)
-        line_excise = excise_map.get(line_key(line), (0.0, 0.0))[0]
+        line_excise = 0.0 if no_excise else excise_map.get(line_key(line), (0.0, 0.0))[0]
         excise_per_unit = line_excise / qty if qty else 0.0
 
         # ── Gross prices: (price + excise) × (1 + VAT) — VAT is charged on
@@ -633,10 +671,10 @@ def _build_goods_and_tax(
         # ── Excise duty: the line's share of the invoice's excise tax row ────
         # (base = VAT-exclusive paid amount, which includes the excise)
         excise_data = compute_excise_for_line(line, item_fields, settings, doc.currency,
-                                              excise=excise_map.get(line_key(line)))
+                                              excise=None if no_excise else excise_map.get(line_key(line)))
         excise_tax_amount = round(excise_data.pop("_line_tax", 0.0), 2)
         registered_for_excise = bool(getattr(settings, "has_local_excise_duty", False))
-        if excise_data.get("exciseFlag") == "1" and not registered_for_excise:
+        if excise_data.get("exciseFlag") == "1" and (no_excise or not registered_for_excise):
             excise_data = {
                 "exciseFlag": "2", "exciseRate": "", "exciseRule": "",
                 "exciseTax":  "",  "pack":        "", "stick":      "",
@@ -766,7 +804,7 @@ def _build_goods_and_tax(
                 "grossAmount":     str(t_gross),
                 "exciseUnit":      "",
                 "exciseCurrency":  "",
-                "taxRateName":     _tax_rate_label(v["rate"], code),
+                "taxRateName":     "Export Invoice" if export else _tax_rate_label(v["rate"], code),
             })
 
     # ── Summary ─────────────────────────────────────────────────────────────

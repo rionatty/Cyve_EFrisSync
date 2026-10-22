@@ -19,8 +19,8 @@ def on_submit(doc, method):
     "Upload to EFRIS". Credit notes are always uploaded by hand (they need a
     reason). A failure never blocks the submit; the Upload button stays.
     """
-    if doc.is_return:
-        return
+    if doc.is_return or doc.get("efris_route_sale"):
+        return   # route sales were fiscalised on the device
     # db check (not get_efris_settings): its frappe.throw would pop up a
     # "not configured" message on every submit for non-EFRIS companies
     if not frappe.db.get_value("EFRIS Settings", {"company": doc.company}, "auto_upload_invoices"):

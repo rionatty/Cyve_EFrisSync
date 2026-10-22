@@ -18,7 +18,7 @@ frappe.query_reports["EFRIS Bulk Submission"] = {
             fieldname: "doctype",
             label: __("Document Type"),
             fieldtype: "Select",
-            options: "Sales Invoice\nPurchase Receipt\nStock Entry",
+            options: "Sales Invoice\nRoute Sales\nPurchase Receipt\nStock Entry",
             default: "Sales Invoice",
             reqd: 1,
             on_change() { frappe.query_report.refresh(); }
@@ -51,6 +51,10 @@ frappe.query_reports["EFRIS Bulk Submission"] = {
             }
             const names = checked.map(r => r.name);
             const doctype = frappe.query_report.get_filter_value("doctype");
+            if (doctype === "Route Sales") {
+                get_route_sale_ids(names);
+                return;
+            }
 
             frappe.confirm(
                 __(`Submit ${names.length} document(s) to EFRIS?`),
@@ -96,3 +100,25 @@ frappe.query_reports["EFRIS Bulk Submission"] = {
         return default_formatter(value, row, column, data);
     }
 };
+
+
+// Route sales were fiscalised on a device: read each one from URA by its FDN
+function get_route_sale_ids(names) {
+    frappe.call({
+        method: "efris_integration.api.bulk.bulk_route_sale_ids",
+        args: { names: JSON.stringify(names) },
+        freeze: true,
+        freeze_message: __("Reading invoices from URA..."),
+        callback(r) {
+            const res = r.message || {};
+            const esc = frappe.utils.escape_html;
+            let html = __("{0} updated, {1} failed, {2} skipped.",
+                [(res.done || []).length, (res.failed || []).length, (res.skipped || []).length]);
+            (res.failed || []).forEach((f) => { html += "<br><b>" + esc(f.name) + "</b>: " + esc(f.error); });
+            (res.skipped || []).forEach((x) => { html += "<br><b>" + esc(x.name) + "</b>: " + esc(x.reason); });
+            frappe.msgprint({ title: __("Get Invoice ID"), message: html,
+                indicator: (res.failed || []).length ? "orange" : "green" });
+            frappe.query_report.refresh();
+        },
+    });
+}

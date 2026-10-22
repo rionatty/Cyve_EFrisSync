@@ -56,11 +56,36 @@ function _efris_refresh(frm) {
         return;
     }
 
+    // Route sale: fiscalised on a device, so fetch it by FDN instead of uploading
+    if (frm.doc.efris_route_sale && !frm.doc.efris_invoice_id) {
+        var $get = frm.add_custom_button(__("Get Invoice ID"), function () {
+            if (!frm.doc.efris_route_fdn) {
+                frappe.msgprint(__("Enter the Device FDN on the EFRIS tab first."));
+                return;
+            }
+            var fetch = function () {
+                frappe.call({
+                    method: "efris_integration.api.invoice.get_route_sale_invoice_id",
+                    args: { invoice_name: frm.doc.name },
+                    freeze: true,
+                    freeze_message: __("Reading the invoice from URA..."),
+                    callback: function (r) { if (!r.exc) frm.reload_doc(); }
+                });
+            };
+            if (frm.is_dirty()) {
+                frm.save("Update", fetch);
+            } else {
+                fetch();
+            }
+        });
+        if ($get && typeof $get.addClass === "function") $get.addClass("btn-primary");
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // PRIMARY ACTION: Upload to EFRIS
     // Show this whenever no URA invoice_id has been assigned yet.
     // ──────────────────────────────────────────────────────────────────────────
-    if (!frm.doc.efris_invoice_id) {
+    if (!frm.doc.efris_invoice_id && !frm.doc.efris_route_sale) {
 
         // Third argument intentionally omitted → standalone button (not in dropdown)
         // Checks URA stock first (T128); a shortage only warns, as in SAP B1.
