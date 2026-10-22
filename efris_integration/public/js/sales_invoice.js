@@ -243,7 +243,7 @@ function _credit_note_buttons(frm) {
 
     if (ref && (approval === "Pending" || approval === "Approved") && frm.doc.docstatus >= 1) {
         frm.add_custom_button(__("Cancel in EFRIS"), function () {
-            efris_confirm_and_call(frm,
+            frappe.confirm(
                 approval === "Pending"
                     ? __("Void credit note application {0} in EFRIS?", [ref])
                     : __("Ask URA to cancel approved credit note {0}?", [frm.doc.efris_fdn_number || ref]),

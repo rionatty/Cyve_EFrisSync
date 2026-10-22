@@ -16,7 +16,7 @@ frappe.ui.form.on("Purchase Receipt", {
                 const what = frm.doc.is_return
                     ? __("as a stock out (return to supplier)")
                     : __("as a stock in: {0}", [frm.doc.efris_stock_in_option || __("Local Purchase")]);
-                efris_confirm_and_call(frm,
+                frappe.confirm(
                     __("Upload <b>{0}</b> to URA EFRIS {1}?", [frm.doc.name, what]),
                     () => efris_call(frm,
                         "efris_integration.api.stock.submit_purchase_receipt",

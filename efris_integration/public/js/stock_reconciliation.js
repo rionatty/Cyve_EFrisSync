@@ -16,7 +16,7 @@ frappe.ui.form.on("Stock Reconciliation", {
                 const what = frm.doc.purpose === "Opening Stock"
                     ? __("as opening stock")
                     : __("as the counted differences");
-                efris_confirm_and_call(frm,
+                frappe.confirm(
                     __("Upload <b>{0}</b> to URA EFRIS {1}?", [frm.doc.name, what]),
                     () => efris_call(frm,
                         "efris_integration.api.stock.submit_stock_reconciliation",

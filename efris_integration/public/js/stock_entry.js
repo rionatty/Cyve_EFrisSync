@@ -59,7 +59,7 @@ function efris_upload_stock_entry(frm) {
         summary = __("Production: produced and consumed lines as set in EFRIS Settings");
     }
 
-    efris_confirm_and_call(frm,
+    frappe.confirm(
         __("Upload <b>{0}</b> to URA EFRIS?<br><br>{1}", [frm.doc.name, summary]),
         () => efris_call(frm,
             "efris_integration.api.stock.submit_stock_entry",
