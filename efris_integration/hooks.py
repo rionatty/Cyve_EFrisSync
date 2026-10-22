@@ -62,6 +62,13 @@ scheduler_events = {
     ],
 }
 
+# ─── Jinja (print formats) ─────────────────────────────────────────────────
+# generate_qr_code_b64(url) renders the EFRIS validation URL as an inline PNG
+# for the "EFRIS Tax Invoice" print format (no external QR service needed).
+jinja = {
+    "methods": ["efris_integration.utils.helpers.generate_qr_code_b64"],
+}
+
 # ─── Install / Migrate ─────────────────────────────────────────────────────
 after_install  = "efris_integration.setup.install.after_install"
 after_migrate  = "efris_integration.setup.install.after_install"
