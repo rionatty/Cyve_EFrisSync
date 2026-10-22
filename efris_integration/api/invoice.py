@@ -661,6 +661,26 @@ def _build_goods_and_tax(
     return goods_details, tax_details, summary
 
 
+def get_efris_print_data(doc) -> dict:
+    """
+    Jinja method for print formats: the goods lines, taxDetails and summary
+    exactly as built for URA (T109), so the printed tax matches what URA holds
+    even when the invoice has no ERPNext tax row (URA then defaults to 18%).
+    Returns {} if EFRIS isn't configured for the company; the print format
+    then falls back to ERPNext's own figures.
+    """
+    try:
+        settings = get_efris_settings(doc.company)
+        goods, taxes, summary = _build_goods_and_tax(doc, settings, company=doc.company)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), f"EFRIS print data failed [{doc.name}]")
+        return {}
+    # Words must match the printed (URA) total, which can differ from ERPNext's
+    # grand total when the invoice has no tax row.
+    in_words = frappe.utils.money_in_words(safe_float(summary["grossAmount"]), doc.currency)
+    return {"goods": goods, "taxes": taxes, "summary": summary, "in_words": in_words}
+
+
 def _pay_way(doc) -> list:
     mode_map = {
         "Cash":         "101",
