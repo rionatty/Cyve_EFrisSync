@@ -111,10 +111,9 @@ def auto_submit(doc) -> None:
     problems are logged on the document and shown as an alert, and the user
     can retry from the EFRIS button.
     """
-    try:
-        settings = get_efris_settings(doc.company)
-    except Exception:
-        return  # EFRIS not configured for this company
+    if not frappe.db.exists("EFRIS Settings", {"company": doc.company}):
+        return  # EFRIS not configured for this company (checked without frappe.throw's popup)
+    settings = get_efris_settings(doc.company)
 
     builders = {
         "Stock Entry":          lambda: _stock_entry_parts(doc, settings, manual=False),

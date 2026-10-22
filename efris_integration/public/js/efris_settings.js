@@ -74,6 +74,28 @@ function _add_primary_buttons(frm) {
         });
     });
 
+    // ── Session setup (T101 -> T103 -> T104) ──────────────────────────────
+    const auth = (method, message) => frappe.call({
+        method: "efris_integration.api.auth." + method,
+        args: { company: frm.doc.company },
+        freeze: true,
+        freeze_message: message,
+        callback() { frm.reload_doc(); },
+    });
+
+    frm.add_custom_button(__("Full Initialise"), () => {
+        if (!frm.doc.company) return frappe.msgprint(__("Please save the settings for a Company first."));
+        frappe.confirm(
+            __("Sign in to EFRIS and get a fresh session key for {0}?", [frm.doc.company]),
+            () => auth("full_initialise", __("Initialising EFRIS..."))
+        );
+    }, __("Session"));
+
+    frm.add_custom_button(__("Test Session Key"), () => {
+        if (!frm.doc.company) return frappe.msgprint(__("Please save the settings for a Company first."));
+        auth("test_session_key", __("Testing the session key with URA..."));
+    }, __("Session"));
+
     // ── Fetch URA Exchange Rates (T126) ───────────────────────────────────
     frm.add_custom_button(__("Fetch URA Exchange Rates"), () => {
         if (!frm.doc.company) {

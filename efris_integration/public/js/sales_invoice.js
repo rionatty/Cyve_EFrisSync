@@ -63,23 +63,28 @@ function _efris_refresh(frm) {
     if (!frm.doc.efris_invoice_id) {
 
         // Third argument intentionally omitted → standalone button (not in dropdown)
+        // Checks URA stock first (T128); a shortage only warns, as in SAP B1.
         var $primary = frm.add_custom_button(__("Upload to EFRIS"), function () {
-            frappe.confirm(
-                __("Submit this invoice to URA EFRIS?"),
-                function () {                         // on YES
-                    frappe.call({
-                        method: "efris_integration.api.invoice.submit_sales_invoice",
-                        args: { invoice_name: frm.doc.name },
-                        freeze: true,
-                        freeze_message: __("Submitting to EFRIS — please wait..."),
-                        callback: function (r) {
-                            if (!r.exc) {
-                                frm.reload_doc();
-                            }
+            var upload = function () {
+                frappe.call({
+                    method: "efris_integration.api.invoice.submit_sales_invoice",
+                    args: { invoice_name: frm.doc.name },
+                    freeze: true,
+                    freeze_message: __("Submitting to EFRIS — please wait..."),
+                    callback: function (r) {
+                        if (!r.exc) {
+                            frm.reload_doc();
                         }
-                    });
+                    }
+                });
+            };
+            _efris_stock_check(frm, function (res) {
+                if (res && (res.shortage || res.problems)) {
+                    _efris_stock_dialog(res, __("Upload Anyway"), upload);
+                } else {
+                    frappe.confirm(__("Submit this invoice to URA EFRIS?"), upload);
                 }
-            );
+            });
         });
 
         // Paint it blue so it stands out in the toolbar
@@ -93,40 +98,40 @@ function _efris_refresh(frm) {
     // SECONDARY ACTIONS — all inside the "EFRIS" dropdown group
     // ──────────────────────────────────────────────────────────────────────────
 
-    // "Refresh from EFRIS" — show when:
-    //   (a) invoice already has a URA invoice_id  (normal refresh / re-query)
-    //   (b) efris_status is "Pending"             (T108 returned no details — need T106)
-    var needs_refresh = frm.doc.efris_invoice_id
-        || frm.doc.efris_status === "Pending"
-        || frm.doc.efris_status === "Submitted";
-
-    if (needs_refresh) {
-        frm.add_custom_button(__("Refresh from EFRIS"), function () {
-            frappe.call({
-                method: "efris_integration.api.invoice.fetch_invoice_from_ura",
-                args: { invoice_name: frm.doc.name },
-                freeze: true,
-                freeze_message: __("Fetching invoice details from URA..."),
-                callback: function (r) {
-                    if (!r.exc) {
-                        if (r.message && r.message.status === "not_found") {
-                            frappe.show_alert({
-                                message: r.message.message
-                                    || __("Invoice not yet visible on URA. Try again shortly."),
-                                indicator: "orange"
-                            });
-                        } else {
-                            frappe.show_alert({
-                                message: __("URA details fetched successfully"),
-                                indicator: "green"
-                            });
-                        }
-                        frm.reload_doc();
+    // "Update EFRIS Details" — finds this invoice on URA by its reference number
+    // (T106) and refills FDN / Invoice ID / verification code / QR (T108).
+    // Highlighted when URA confirmed the upload but details are missing.
+    var details_missing = !frm.doc.efris_fdn_number || !frm.doc.efris_antifake_code
+        || !frm.doc.efris_invoice_id || !frm.doc.efris_qr_path;
+    var update_details = function () {
+        frappe.call({
+            method: "efris_integration.api.invoice.fetch_invoice_from_ura",
+            args: { invoice_name: frm.doc.name },
+            freeze: true,
+            freeze_message: __("Looking up this invoice on URA..."),
+            callback: function (r) {
+                if (!r.exc) {
+                    if (r.message && r.message.status === "not_found") {
+                        frappe.msgprint({ message: r.message.message, indicator: "orange", title: __("EFRIS") });
+                    } else {
+                        frappe.show_alert({ message: __("EFRIS details updated"), indicator: "green" });
                     }
+                    frm.reload_doc();
                 }
-            });
-        }, __("EFRIS"));
+            }
+        });
+    };
+    if (frm.doc.efris_status && details_missing) {
+        frm.add_custom_button(__("Update EFRIS Details"), update_details);
+    } else {
+        frm.add_custom_button(__("Update EFRIS Details"), update_details, __("EFRIS"));
     }
+
+    frm.add_custom_button(__("Check EFRIS Stock"), function () {
+        _efris_stock_check(frm, function (res) {
+            if (res) _efris_stock_dialog(res);
+        });
+    }, __("EFRIS"));
 
     frm.add_custom_button(__("Recalculate Excise"), function () {
         frappe.call({
@@ -164,6 +169,47 @@ function _efris_refresh(frm) {
     }, __("EFRIS"));
 
     console.log("[EFRIS JS v2.1] buttons rendered OK");
+}
+
+
+// ── URA stock check (T128) ────────────────────────────────────────────────────
+// Calls back with the result, or with null if the check itself failed
+// (then the upload simply goes ahead after a normal confirmation).
+
+function _efris_stock_check(frm, done) {
+    frappe.call({
+        method: "efris_integration.api.invoice.check_ura_stock",
+        args: { invoice_name: frm.doc.name },
+        freeze: true,
+        freeze_message: __("Checking stock on URA..."),
+        callback: function (r) { done(r.message || null); },
+        error: function () { done(null); }
+    });
+}
+
+function _efris_stock_dialog(res, action_label, action) {
+    var esc = frappe.utils.escape_html;
+    var rows = (res.rows || []).map(function (r) {
+        var colour = r.shortage > 0 ? "#c0392b" : (r.note ? "#b7791f" : "inherit");
+        return "<tr style='color:" + colour + "'>"
+            + "<td>" + esc(r.item_code) + (r.branch_id ? " <small>(" + esc(r.branch_id) + ")</small>" : "") + "</td>"
+            + "<td style='text-align:right'>" + format_number(r.needed) + "</td>"
+            + "<td style='text-align:right'>" + (r.ura_stock === null ? "-" : format_number(r.ura_stock)) + "</td>"
+            + "<td style='text-align:right'>" + (r.shortage > 0 ? format_number(r.shortage) : "") + "</td>"
+            + "<td>" + esc(r.note || "") + "</td></tr>";
+    }).join("");
+    var html = (res.rows || []).length
+        ? "<table class='table table-bordered table-sm'><thead><tr><th>" + __("Item") + "</th><th>"
+            + __("Invoice Qty") + "</th><th>" + __("URA Stock") + "</th><th>" + __("Short") + "</th><th>"
+            + __("Note") + "</th></tr></thead><tbody>" + rows + "</tbody></table>"
+        : __("No stock items on this invoice.");
+    var title = res.shortage ? __("URA Stock Shortage") : __("URA Stock");
+    var d = new frappe.ui.Dialog({ title: title, fields: [{ fieldtype: "HTML", fieldname: "t" }] });
+    d.fields_dict.t.$wrapper.html(html);
+    if (action) {
+        d.set_primary_action(action_label, function () { d.hide(); action(); });
+    }
+    d.show();
 }
 
 

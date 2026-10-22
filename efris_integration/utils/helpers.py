@@ -199,6 +199,9 @@ def get_customer_efris_fields(customer: str) -> dict:
             "efris_sector",
             "efris_export",          # "Y - Yes" / "N - No" → drives invoiceIndustryCode
             "efris_export_flag",     # legacy boolean export flag
+            "efris_deemed_vat",      # "Y - Yes" → deemed VAT invoice (T137 project)
+            "efris_invoice_name",    # name URA holds for this TIN (set by Verify TIN)
+            "customer_name",
             "mobile_no",
             "email_id",
         ],

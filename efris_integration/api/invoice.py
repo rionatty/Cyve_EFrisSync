@@ -17,6 +17,7 @@ from datetime import datetime
 import frappe
 
 from efris_integration.api.base import EFRISClient, EFRISAPIError
+from efris_integration.api.session import call_with_session
 from efris_integration.utils.helpers import (
     generate_qr_code_b64,
     get_customer_efris_fields,
@@ -69,9 +70,12 @@ def submit_sales_invoice(invoice_name: str) -> dict:
             frappe.log_error(str(e), "EFRIS T127 prefetch failed — continuing without")
 
     buyer = get_customer_efris_fields(doc.customer)
+    _check_buyer(doc, buyer, client)
+    deemed_projects = _deemed_projects(doc, buyer, client) if _is_deemed(buyer) else None
     goods_details, tax_details, summary = _build_goods_and_tax(
         doc, settings,
         company=doc.company,
+        deemed_projects=deemed_projects,
     )
 
     # is_export: Customer EFRIS tab → Export field = "Y - Yes"
@@ -89,8 +93,7 @@ def submit_sales_invoice(invoice_name: str) -> dict:
         "extend":           {"reason": "", "reasonCode": ""},
     }
 
-    result = client.call("T109", payload, encrypt=True, sign=True,
-                         doc_type="Sales Invoice", doc_name=invoice_name)
+    result = call_with_session(client, doc.company, "T109", payload, "Sales Invoice", invoice_name)
 
     # ── Log raw result so we can debug response structure ─────────────────
     frappe.logger("efris").info(
@@ -101,23 +104,19 @@ def submit_sales_invoice(invoice_name: str) -> dict:
 
     _save_result(doc, result)
 
-    # ── T106 fallback: if T109 returned no invoice details, query URA ─────
+    # ── Recovery: if T109 returned no invoice details, look the invoice up ─
     # URA sometimes returns returnCode=00 but an empty response body.
-    # The invoice IS registered — T106 is the reliable way to confirm and
-    # retrieve invoiceId, antifakeCode, FDN number, and QR code.
+    # The invoice IS registered — find it by our reference number (T106)
+    # and read its details (T108).
     doc.reload()
     if not doc.get("efris_invoice_id"):
-        frappe.logger("efris").info(
-            f"[T109] No invoice_id in response for {invoice_name} — "
-            "attempting T106 fallback to fetch URA invoice details"
-        )
         try:
-            _t106_fallback(doc, client, invoice_name)
+            _recover_from_ura(doc, client)
             doc.reload()
-        except Exception as exc:
+        except Exception:
             frappe.log_error(
                 frappe.get_traceback(),
-                f"EFRIS T106 fallback failed [{invoice_name}]"
+                f"EFRIS recovery after T109 failed [{invoice_name}]"
             )
 
     # ── Success toast ──────────────────────────────────────────────────────
@@ -127,7 +126,7 @@ def submit_sales_invoice(invoice_name: str) -> dict:
         f"✅ Invoice {invoice_name} submitted to EFRIS."
         + (f"<br>Invoice ID: <b>{_inv_id}</b>" if _inv_id else
            "<br><b>Note:</b> URA confirmed receipt but did not return invoice details yet. "
-           "Click <b>Refresh from EFRIS</b> in the EFRIS menu to fetch them."),
+           "Click <b>Update EFRIS Details</b> in the EFRIS menu to fetch them."),
         indicator="green",
         title="EFRIS Submission",
     )
@@ -139,19 +138,19 @@ def submit_sales_invoice(invoice_name: str) -> dict:
 @frappe.whitelist()
 def fetch_invoice_from_ura(invoice_name: str) -> dict:
     """
-    Refresh EFRIS tab fields by querying URA T106 for this invoice.
-    Called by the "Refresh from EFRIS" button on the Sales Invoice form.
-    Works even when efris_invoice_id is empty (T109 returned no details).
+    "Update EFRIS Details": refill FDN / Invoice ID / verification code / QR
+    for an invoice URA already has. Mirrors SAP B1 btnUpdQR (T106 by
+    reference number → T108).
     """
-    doc    = frappe.get_doc("Sales Invoice", invoice_name)
+    doc = frappe.get_doc("Sales Invoice", invoice_name)
     client = EFRISClient(company=doc.company)
-    _t106_fallback(doc, client, invoice_name)
-    doc.reload()
-    inv_id = doc.get("efris_invoice_id") or ""
-    if inv_id:
-        return {"status": "ok", "invoice_id": inv_id}
+    if _recover_from_ura(doc, client):
+        doc.reload()
+        return {"status": "ok", "invoice_id": doc.get("efris_invoice_id") or "",
+                "fdn": doc.get("efris_fdn_number") or ""}
     return {"status": "not_found",
-            "message": "Invoice not yet visible on URA EFRIS. Try again in a few moments."}
+            "message": f"URA has no invoice with reference {invoice_name} yet. "
+                       "If you just uploaded it, try again in a few moments."}
 
 
 # ─── T106: Query Invoices ─────────────────────────────────────────────────
@@ -176,92 +175,179 @@ def query_invoices(
                        doc_type="Sales Invoice", doc_name="Query")
 
 
-# ─── T106 fallback: called after T109 returns empty content ───────────────────
+# ─── Recovery: find our invoice on URA (T106) and read its details (T108) ────
 
-def _t106_fallback(doc, client: "EFRISClient", invoice_name: str) -> None:
+def _recover_from_ura(doc, client: "EFRISClient") -> bool:
     """
-    Query T106 to retrieve invoice details when T109 returned empty content.
-
-    URA EFRIS sometimes returns returnCode="00" on T109 but an empty response
-    body — the invoice IS registered on URA's side, we just don't get the
-    invoiceId / antifakeCode / FDN back in the T109 response.
-
-    This function queries T106 (list invoices), identifies our invoice by
-    sellerDetails.referenceNo or basicInformation.invoiceNo, then calls
-    _save_result() with the matched record so the EFRIS tab fields are populated.
+    Find this invoice on URA by the reference number we sent
+    (sellerDetails.referenceNo = ERPNext name), then read its full details
+    with T108 and save them. Only an exact reference match is accepted —
+    never "the latest invoice", which could belong to another document.
+    Returns True when the invoice was found and saved.
     """
-    from datetime import date
+    from frappe.utils import add_days, getdate, today
 
-    today = date.today().strftime("%Y-%m-%d")
+    start = add_days(getdate(doc.posting_date), -7)
+    result = call_with_session(client, doc.company, "T106", {
+        "referenceNo": doc.name,
+        "queryType":   "1",
+        "invoiceType": "1",
+        "startDate":   str(start),
+        "endDate":     str(today()),
+        "pageNo":      "1",
+        "pageSize":    "99",
+    }, "Sales Invoice", doc.name)
 
-    # First try: search by our ERPNext invoice name (sent as referenceNo in T109)
-    # Some EFRIS versions support filtering by invoiceNo (which we set to doc.name)
-    for search_no in [invoice_name, ""]:
-        payload = {
-            "invoiceNo": search_no,
-            "startDate": today,
-            "endDate":   today,
-            "pageNo":    "1",
-            "pageSize":  "20",
-        }
-        try:
-            result = client.call("T106", payload, encrypt=True, sign=True,
-                                 doc_type="Sales Invoice", doc_name=invoice_name)
-        except Exception as exc:
-            frappe.log_error(str(exc), f"EFRIS T106 fallback query failed [{invoice_name}]")
-            return
+    matches = [
+        r for r in _extract_invoice_list(result)
+        if isinstance(r, dict)
+        and str(r.get("referenceNo") or (r.get("sellerDetails") or {}).get("referenceNo") or "").strip() == doc.name
+        and str(r.get("isInvalid") or "0") != "1"
+    ]
+    if not matches:
+        frappe.logger("efris").info(f"[recovery] {doc.name}: no URA invoice with this reference")
+        return False
 
-        frappe.logger("efris").info(
-            f"[T106 fallback] {invoice_name}: search_no={search_no!r} "
-            f"keys={list(result.keys()) if result else 'EMPTY'} "
-            f"preview={frappe.as_json(result)[:300]}"
+    fdn = str(matches[0].get("invoiceNo") or (matches[0].get("basicInformation") or {}).get("invoiceNo") or "").strip()
+    if not fdn:
+        return False
+    detail = call_with_session(client, doc.company, "T108", {"invoiceNo": fdn}, "Sales Invoice", doc.name)
+    if not (detail or {}).get("basicInformation"):
+        return False
+    _save_result(doc, detail)
+    return True
+
+
+# ─── URA stock check (T128) — warns, never blocks (SAP B1 btnURAStk) ──────────
+
+@frappe.whitelist()
+def check_ura_stock(invoice_name: str) -> dict:
+    """
+    Compare what this invoice sells with the stock URA holds (T128, per branch
+    when multi-branch is on). Returns one row per stock item; `shortage` is
+    True when URA holds less than the invoice needs.
+    """
+    doc = frappe.get_doc("Sales Invoice", invoice_name)
+    settings = get_efris_settings(doc.company)
+    client = EFRISClient(company=doc.company)
+
+    needed: dict = {}
+    for line in doc.items:
+        if not frappe.db.get_value("Item", line.item_code, "is_stock_item"):
+            continue
+        branch = ""
+        if settings.multi_branch and line.get("warehouse"):
+            branch = frappe.db.get_value("Warehouse", line.warehouse, "efris_branch_id") or ""
+        key = (line.item_code, branch)
+        needed[key] = needed.get(key, 0.0) + abs(safe_float(line.get("stock_qty") or line.qty))
+
+    rows = []
+    for (item_code, branch), qty in needed.items():
+        row = {"item_code": item_code, "branch_id": branch, "needed": qty,
+               "ura_stock": None, "shortage": 0.0, "note": ""}
+        goods_id = (frappe.db.get_value("Item", item_code, "efris_reference_no") or "").strip()
+        if not goods_id:
+            row["note"] = "Not registered on EFRIS (no URA goods ID)"
+        else:
+            payload = {"id": goods_id}
+            if branch:
+                payload["branchId"] = branch
+            try:
+                result = call_with_session(client, doc.company, "T128", payload, "Sales Invoice", doc.name) or {}
+                row["ura_stock"] = safe_float(result.get("stock"))
+                row["shortage"] = round(max(0.0, qty - row["ura_stock"]), 6)
+            except EFRISAPIError as exc:
+                row["note"] = f"[{exc.code}] {exc.message}"
+        rows.append(row)
+
+    return {
+        "rows": rows,
+        "shortage": any(r["shortage"] > 0 for r in rows),
+        "problems": any(r["note"] for r in rows),
+    }
+
+
+# ─── Buyer checks before upload (SAP B1 ARInvoice.cs) ─────────────────────────
+
+def _check_buyer(doc, buyer: dict, client: "EFRISClient") -> None:
+    """
+    Business type must be set; B2B needs a TIN; for B2B/B2G the TIN and legal
+    name must match what URA holds (T119), otherwise URA would fiscalise the
+    invoice to the wrong buyer.
+    """
+    btype = (buyer.get("efris_business_type") or buyer.get("efris_buyer_type") or "").strip().upper()
+    if not btype:
+        frappe.throw(
+            f"Set <b>Business Type</b> on the EFRIS tab of customer <b>{doc.customer}</b> "
+            "(B2B, B2C, B2G or B2F) before uploading.",
+            title="EFRIS: Business Type Missing",
+        )
+    tin = (buyer.get("tax_id") or "").strip()
+    if btype == "B2B" and not tin:
+        frappe.throw(
+            f"Customer <b>{doc.customer}</b> is B2B but has no <b>Tax ID (TIN)</b>.",
+            title="EFRIS: Customer TIN Missing",
+        )
+    if btype not in ("B2B", "B2G") or not tin:
+        return
+
+    result = call_with_session(client, doc.company, "T119", {"tin": tin, "ninBrn": ""},
+                               "Sales Invoice", doc.name) or {}
+    payer = result.get("taxpayer") or result
+    ura_tin = str(payer.get("tin") or "").strip()
+    ura_name = str(payer.get("legalName") or "").strip()
+    if ura_tin and ura_tin != tin:
+        frappe.throw(
+            f"URA returned TIN <b>{ura_tin}</b> for customer TIN <b>{tin}</b>. Check the customer's Tax ID.",
+            title="EFRIS: Customer TIN Mismatch",
+        )
+    names = {_norm_name(n) for n in (doc.customer_name, buyer.get("customer_name"), buyer.get("efris_invoice_name")) if n}
+    if ura_name and _norm_name(ura_name) not in names:
+        frappe.throw(
+            f"Customer <b>{doc.customer_name}</b> does not match the legal name URA holds for TIN "
+            f"<b>{tin}</b>: <b>{ura_name}</b>.<br>"
+            "Open the customer and use <b>Verify TIN</b> to update its name, then upload again.",
+            title="EFRIS: Customer Name and TIN Don't Match",
         )
 
-        if not result:
+
+def _norm_name(name: str) -> str:
+    """Compare names ignoring case, punctuation and extra spaces."""
+    import re
+    return " ".join(re.sub(r"[^A-Z0-9 ]", " ", str(name).upper()).split())
+
+
+# ─── Deemed VAT (T137 projects) ───────────────────────────────────────────────
+
+def _is_deemed(buyer: dict) -> bool:
+    return str(buyer.get("efris_deemed_vat") or "").upper().startswith("Y")
+
+
+def _deemed_projects(doc, buyer: dict, client: "EFRISClient") -> dict:
+    """URA deemed-VAT project per goods category for this buyer (T137)."""
+    tin = (buyer.get("tax_id") or "").strip()
+    if not tin:
+        frappe.throw(
+            f"Customer <b>{doc.customer}</b> is set to Deemed VAT but has no Tax ID (TIN).",
+            title="EFRIS: Deemed VAT",
+        )
+    projects = {}
+    for line in doc.items:
+        category = get_item_efris_fields(line.item_code).get("efris_goods_category_id") or "238"
+        if category in projects:
             continue
-
-        # ── Normalise T106 response to a flat list of invoice records ──────
-        invoices = _extract_invoice_list(result)
-
-        if not invoices:
-            frappe.log_error(
-                f"T106 returned no invoice records for {invoice_name}. "
-                f"Result: {frappe.as_json(result)[:500]}",
-                f"EFRIS T106 Fallback — empty list [{invoice_name}]",
+        result = call_with_session(client, doc.company, "T137",
+                                   {"tin": tin, "commodityCategoryCode": category},
+                                   "Sales Invoice", doc.name) or {}
+        found = result.get("deemedAndExemptProjectList") or []
+        if not found:
+            frappe.throw(
+                f"URA has no deemed VAT project for TIN <b>{tin}</b> and goods category "
+                f"<b>{category}</b> (item {line.item_code}). Ask the customer to register the project with URA.",
+                title="EFRIS: No Deemed VAT Project",
             )
-            continue
-
-        # ── Find the matching invoice ──────────────────────────────────────
-        matched = None
-        for inv in invoices:
-            if not isinstance(inv, dict):
-                continue
-            basic  = inv.get("basicInformation") or {}
-            seller = inv.get("sellerDetails")    or {}
-            # Match by our ERPNext name sent as referenceNo OR as basicInformation.invoiceNo
-            if (seller.get("referenceNo") == invoice_name
-                    or basic.get("invoiceNo") == invoice_name):
-                matched = inv
-                break
-
-        # Fallback: take the first record returned (most recent upload today)
-        if not matched:
-            matched = invoices[0] if invoices else None
-
-        if matched:
-            frappe.logger("efris").info(
-                f"[T106 fallback] Matched invoice for {invoice_name}: "
-                f"basicInfo={list((matched.get('basicInformation') or {}).keys())}"
-            )
-            _save_result(doc, matched)
-            return
-
-    frappe.log_error(
-        f"T106 fallback exhausted all attempts for {invoice_name}. "
-        "Invoice may not yet be visible in T106. "
-        "Use 'Refresh from EFRIS' later to fetch URA details.",
-        f"EFRIS T106 Fallback — not found [{invoice_name}]",
-    )
+        projects[category] = found[0]
+    return projects
 
 
 def _extract_invoice_list(result: dict) -> list:
@@ -449,101 +535,105 @@ def _build_goods_and_tax(
     doc,
     settings,
     company: str = "",
+    deemed_projects: "dict | None" = None,
 ) -> tuple[list, list, dict]:
     """
     Build goodsDetails, taxDetails, and summary for any invoice-like doc.
 
-    Mirrors SAP B1 CreateInvoice() exactly:
-      • unitPrice / total    → always VAT-INCLUSIVE (gross)
-      • taxRate              → URA decimal string: "0.18", "0", "-"
-      • taxCategoryCode      → "01" (standard), "02" (zero), "03" (exempt)
-      • modeCode             → "1"
-      • discountFlag="2"     → no discountTotal / discountTaxRate keys sent
-      • remainAmount         → equals total when no discount
+    Mirrors SAP B1 CreateInvoice():
+      • unitPrice / total    → VAT-INCLUSIVE (gross), totals TRUNCATED to 2dp
+      • taxRate              → "0.18", "0", "-"
+      • tax category         → 01 standard, 02 zero, 03 exempt, 11 out of scope,
+                               04 deemed (whole invoice), 05 excise (own row)
+      • discounts            → item line (discountFlag 1, full price, discountTotal)
+                               followed by a "(Discount)" line (discountFlag 0,
+                               negative total); covers line discounts and the
+                               invoice-level additional discount
+      • deemed VAT customer  → deemedFlag 1, tax 0, item "(Deemed)", URA project
+                               from T137 (deemed_projects, only when uploading)
+      • out of scope ("00")  → vatApplicableFlag 0, taxRate "0", category 11
+      • orderNumber          → 0-based, one per entry (items and discount lines)
+
+    Read-only (no URA calls), so the print format can call it too.
     """
     goods_details: list[dict] = []
-    # tax buckets keyed by URA category code ("01", "02", "03")
     tax_buckets: dict[str, dict] = {}
-    total_net   = 0.0
-    total_tax   = 0.0
-    total_gross = 0.0
+    total_net = total_tax = total_gross = 0.0
+    _company = company or doc.company or ""
+    buyer = get_customer_efris_fields(doc.customer) if doc.get("customer") else {}
+    deemed = _is_deemed(buyer)
+    tax_included_in_rate = _is_tax_included_in_rate(doc)
+    invoice_discount = abs(safe_float(doc.get("discount_amount"))) > 0.0001
+    order_no = 0
 
-    for idx, line in enumerate(doc.items, start=1):
-        _company    = company or doc.company or ""
+    for line in doc.items:
         item_fields = get_item_efris_fields(line.item_code)
-        uom_code    = map_uom(line.uom, _company)
-
-        # Resolve URA tax info + ERPNext-computed per-line tax amount
-        tax_rate, cat_code, cat_name, ura_rate_str, erp_tax_amount = \
-            _resolve_line_tax(doc, line, _company)
-
-        # ── Amounts ─────────────────────────────────────────────────────────
+        uom_code = map_uom(line.uom, _company)
+        tax_rate, cat_code, cat_name, ura_rate_str, _erp_tax = _resolve_line_tax(doc, line, _company)
+        out_of_scope = cat_code == "11"
         qty = safe_float(line.qty)
 
-        # Detect tax-inclusive pricing:
-        # When "Is this Tax Included?" is checked on the tax row,
-        # line.rate already contains the VAT-inclusive (gross) price.
-        # In that case we must NOT multiply by (1 + rate) again.
-        tax_included_in_rate = _is_tax_included_in_rate(doc)
+        # ── Gross (VAT-inclusive) prices ─────────────────────────────────────
+        def gross(price):
+            price = safe_float(price)
+            return round(price if tax_included_in_rate else price * (1 + tax_rate / 100), 4)
 
-        if tax_included_in_rate:
-            # line.rate is already the gross (VAT-inclusive) unit price
-            gross_unit_price = round(safe_float(line.rate), 4)
+        gross_unit_price = gross(line.rate)
+        list_price = safe_float(line.get("price_list_rate"))
+        full_unit_price = gross(list_price) if list_price > safe_float(line.rate) + 0.0001 else gross_unit_price
+
+        full_total = _trunc2(qty * full_unit_price)
+        if invoice_discount:
+            # net_amount carries the invoice-level discount share (ex-VAT)
+            paid_total = round(safe_float(line.net_amount) * (1 + tax_rate / 100), 2)
         else:
-            # line.rate is net; gross = net × (1 + rate)
-            gross_unit_price = round(safe_float(line.rate) * (1 + tax_rate / 100), 4)
+            paid_total = _trunc2(qty * gross_unit_price)
+        discount = round(full_total - paid_total, 2)
+        has_discount = discount >= 0.01
 
-        # URA rule [1316]: total = trunc(qty × unitPrice, 2)  — TRUNCATE, not round
-        gross_amount = _trunc2(qty * gross_unit_price)
+        # Deemed VAT: price stays as invoiced, but no VAT is charged on the line
+        vat_rate = 0.0 if deemed else tax_rate
+        vat_rate_str = "0" if (deemed or out_of_scope) else ura_rate_str
 
-        # URA rule [2776]: tax = trunc(total × taxRate / (1 + taxRate), 2)
-        # total is VAT-inclusive (gross), so tax is back-extracted from gross.
-        # e.g. gross=118, rate=18% → tax = trunc(118 × 0.18/1.18, 2) = 18.00
-        # Using gross-minus-net would differ by 0.01 due to truncation gaps.
-        if tax_rate > 0:
-            tax_decimal = tax_rate / 100           # 18.0 → 0.18
-            tax_amount  = _trunc2(gross_amount * tax_decimal / (1 + tax_decimal))
+        def vat_of(amount):
+            if vat_rate <= 0:
+                return 0.0
+            d = vat_rate / 100
+            return math.copysign(_trunc2(abs(amount) * d / (1 + d)), amount)
+
+        if has_discount:
+            unit_price, total = full_unit_price, full_total
+            tax_amount = vat_of(full_total)
+            discount_tax = vat_of(-discount)            # negative
+            line_gross = round(full_total - discount, 2)
+            line_tax = round(tax_amount + discount_tax, 2)
         else:
-            tax_amount  = 0.0
+            unit_price, total = gross_unit_price, paid_total
+            tax_amount = vat_of(paid_total)
+            discount_tax = 0.0
+            line_gross = paid_total
+            line_tax = tax_amount
+        line_net = round(line_gross - line_tax, 2)
 
-        # Derive net from gross so buckets stay self-consistent:
-        #   net = gross - tax  (both already trunc'd to 2dp)
-        # Using ERPNext net_amount for bucket accumulation causes net+tax ≠ gross
-        # across multi-line invoices due to independent truncation (URA error 1342).
-        line_net     = round(gross_amount - tax_amount, 2)
-        total_net   += line_net
-        total_tax   += tax_amount
-        total_gross += gross_amount
+        total_net += line_net
+        total_tax += line_tax
+        total_gross += line_gross
 
-        # ── Excise duty ──────────────────────────────────────────────────────
-        # compute_excise_for_line returns metadata only; exciseTax="0" placeholder.
-        # We overwrite exciseTax here using the same _trunc2 formula as VAT:
-        #   exciseTax = trunc(line_net × excise_decimal / (1 + excise_decimal), 2)
-        # line_net = gross - VAT_tax = the VAT-exclusive (post-VAT, pre-excise) amount.
-        #
-        # Guard: if the taxpayer is not registered for Local Excise Duty with URA
-        # (EFRIS Settings → "Registered for Local Excise Duty" unchecked),
-        # force exciseFlag="2" regardless of the item flag to avoid URA error [681].
+        # ── Excise duty (unchanged rules; base = VAT-exclusive paid amount) ──
         excise_data = compute_excise_for_line(line, item_fields, settings, doc.currency)
-
         registered_for_excise = bool(getattr(settings, "has_local_excise_duty", False))
         if excise_data.get("exciseFlag") == "1" and not registered_for_excise:
-            # Taxpayer not registered — override to non-excise and clear all excise fields
             excise_data = {
                 "exciseFlag": "2", "exciseRate": "", "exciseRule": "",
                 "exciseTax":  "",  "pack":        "", "stick":      "",
                 "exciseUnit": "",  "exciseCurrency": "", "exciseRateName": "",
             }
-
         if excise_data.get("exciseFlag") == "1":
             excise_decimal = safe_float(excise_data.get("exciseRate") or "0")
             if excise_decimal > 0:
-                # Extract excise from the VAT-exclusive line amount
                 excise_tax_amount = _trunc2(line_net * excise_decimal / (1 + excise_decimal))
-                excise_base       = round(line_net - excise_tax_amount, 2)
+                excise_base = round(line_net - excise_tax_amount, 2)
                 excise_data["exciseTax"] = str(excise_tax_amount)
-
-                # Accumulate a separate excise tax bucket (taxCategoryCode "05")
                 if "excise" not in tax_buckets:
                     tax_buckets["excise"] = {
                         "net": 0.0, "tax": 0.0, "gross": 0.0,
@@ -554,16 +644,10 @@ def _build_goods_and_tax(
                     }
                 tax_buckets["excise"]["net"]   += excise_base
                 tax_buckets["excise"]["tax"]   += excise_tax_amount
-                tax_buckets["excise"]["gross"] += line_net   # = excise_base + excise_tax
+                tax_buckets["excise"]["gross"] += line_net
 
-        # ── Discount ────────────────────────────────────────────────────────
-        discount_flag = "2"   # "2" = no explicit discount line (discount in unit price)
-
-        # ── Goods item ──────────────────────────────────────────────────────
+        # ── Goods entry ──────────────────────────────────────────────────────
         goods_cat_id = item_fields.get("efris_goods_category_id") or "238"
-
-        # categoryId: for excise items = exciseDutyCode (e.g. "LED010300")
-        #             for non-excise  = same as goodsCategoryId (VAT goods category)
         if excise_data.get("exciseFlag") == "1":
             excise_cat_id   = item_fields.get("efris_excise_category_id") or goods_cat_id
             excise_cat_name = item_fields.get("efris_excise_category_name") or line.item_group or ""
@@ -571,63 +655,95 @@ def _build_goods_and_tax(
             excise_cat_id   = goods_cat_id
             excise_cat_name = line.item_group or ""
 
+        item_name = (line.item_name or line.item_code) + (" (Deemed)" if deemed else "")
+        vat_flag = "0" if out_of_scope else "1"
         good: dict = {
-            "item":              line.item_name or line.item_code,
+            "item":              item_name,
             "itemCode":          line.item_code,
             "qty":               str(qty),
             "unitOfMeasure":     uom_code,
-            "unitPrice":         str(gross_unit_price),   # VAT-inclusive gross
-            "total":             str(gross_amount),        # trunc(qty × unitPrice, 2)
-            "taxRate":           ura_rate_str,             # "0.18", "0", or "-"
-            "tax":               str(tax_amount),          # trunc(total × rate/(1+rate), 2)
-            "remainAmount":      str(gross_amount),        # = total (no discount)
-            "orderNumber":       str(idx - 1),             # 0-based (rule 1219)
-            "discountFlag":      discount_flag,            # "2" = no discount
-            "deemedFlag":        "2",                      # not a deemed supply
-            "vatApplicableFlag": "1",                      # always 1 for VAT-registered
-            "categoryId":        excise_cat_id,            # exciseDutyCode when flag=1
+            "unitPrice":         str(unit_price),
+            "total":             str(total),
+            "taxRate":           vat_rate_str,
+            "tax":               str(tax_amount),
+            "remainAmount":      str(line_gross),
+            "orderNumber":       str(order_no),
+            "discountFlag":      "1" if has_discount else "2",
+            "deemedFlag":        "1" if deemed else "2",
+            "vatApplicableFlag": vat_flag,
+            "categoryId":        excise_cat_id,
             "categoryName":      excise_cat_name,
-            "goodsCategoryId":   goods_cat_id,             # VAT commodity classification
+            "goodsCategoryId":   goods_cat_id,
             "goodsCategoryName": line.item_group or "",
-            **excise_data,   # exciseFlag, exciseRate, exciseRule, exciseTax, exciseRateName…
+            **excise_data,
         }
+        if has_discount:
+            good["discountTotal"] = str(-discount)
+            good["discountTaxRate"] = vat_rate_str
+        if deemed:
+            project = (deemed_projects or {}).get(goods_cat_id) or {}
+            good["deemedExemptCode"] = "101"
+            if project:
+                good["vatProjectId"] = str(project.get("projectId") or "")
+                good["vatProjectName"] = str(project.get("projectName") or "")
         goods_details.append(good)
+        order_no += 1
 
-        # ── Aggregate VAT tax buckets ────────────────────────────────────────
-        if cat_code not in tax_buckets:
-            tax_buckets[cat_code] = {
+        if has_discount:
+            goods_details.append({
+                "item":              item_name + " (Discount)",
+                "itemCode":          line.item_code,
+                "unitOfMeasure":     uom_code,
+                "total":             str(-discount),
+                "taxRate":           vat_rate_str,
+                "tax":               str(discount_tax),
+                "remainAmount":      "0",
+                "orderNumber":       str(order_no),
+                "discountFlag":      "0",
+                "discountTaxRate":   vat_rate_str,
+                "deemedFlag":        "2",
+                "exciseFlag":        "2",
+                "vatApplicableFlag": vat_flag,
+                "categoryId":        goods_cat_id,
+                "categoryName":      line.item_group or "",
+                "goodsCategoryId":   goods_cat_id,
+                "goodsCategoryName": line.item_group or "",
+            })
+            order_no += 1
+
+        # ── VAT tax bucket (deemed invoices use one 04 bucket) ───────────────
+        key = "04" if deemed else cat_code
+        if key not in tax_buckets:
+            tax_buckets[key] = {
                 "net": 0.0, "tax": 0.0, "gross": 0.0,
-                "rate": ura_rate_str, "name": cat_name,
+                "rate": "0" if (deemed or out_of_scope) else ura_rate_str,
+                "name": "D: Deemed" if deemed else cat_name,
             }
-        tax_buckets[cat_code]["net"]   += line_net      # gross - tax (self-consistent)
-        tax_buckets[cat_code]["tax"]   += tax_amount
-        tax_buckets[cat_code]["gross"] += gross_amount
+        tax_buckets[key]["net"]   += line_net
+        tax_buckets[key]["tax"]   += line_tax
+        tax_buckets[key]["gross"] += line_gross
 
     # ── Tax details ─────────────────────────────────────────────────────────
     # Rule [1342]: netAmount + taxAmount MUST equal grossAmount exactly.
-    # Excise duty gets its own row with taxCategoryCode="05" — separate from VAT.
-    # Rule 2831: taxRateName is MANDATORY when taxCategoryCode is "05".
+    # Excise duty gets its own row (05); taxRateName is mandatory there (2831).
     tax_details = []
     for code, v in tax_buckets.items():
         t_net   = round(v["net"],  2)
         t_tax   = round(v["tax"],  2)
-        t_gross = round(t_net + t_tax, 2)   # always derived — guarantees rule [1342]
-
+        t_gross = round(t_net + t_tax, 2)
         if code == "excise":
-            # Excise Duty row — taxCategoryCode "05"
             tax_details.append({
                 "taxCategory":     "Excise Duty",
                 "taxCategoryCode": "05",
                 "netAmount":       str(t_net),
-                "taxRate":         v["rate"],        # decimal: "0.1" for 10%
+                "taxRate":         v["rate"],
                 "taxAmount":       str(t_tax),
                 "grossAmount":     str(t_gross),
                 "exciseUnit":      v["excise_unit"],
                 "exciseCurrency":  v["excise_currency"],
-                "taxRateName":     v["rate_name"],   # e.g. "10%" — MANDATORY (rule 2831)
+                "taxRateName":     v["rate_name"],
             })
         else:
-            # VAT row — taxCategoryCode "01"/"02"/"03"
             tax_details.append({
                 "taxCategory":     v["name"],
                 "taxCategoryCode": code,
@@ -637,14 +753,11 @@ def _build_goods_and_tax(
                 "grossAmount":     str(t_gross),
                 "exciseUnit":      "",
                 "exciseCurrency":  "",
-                "taxRateName":     _tax_rate_label(v["rate"]),
+                "taxRateName":     _tax_rate_label(v["rate"], code),
             })
 
     # ── Summary ─────────────────────────────────────────────────────────────
-    # Rule [1345]: summary.grossAmount = sum of all taxDetails grossAmounts
-    # EXCEPT the Excise Duty row (taxCategoryCode "05").
-    # total_net / total_tax / total_gross only accumulate VAT figures (not excise),
-    # so they already satisfy rule [1345] without any additional filtering.
+    # Rule [1345]: summary.grossAmount = sum of taxDetails gross EXCEPT excise (05).
     s_net   = round(total_net,  2)
     s_tax   = round(total_tax,  2)
     s_gross = round(s_net + s_tax, 2)
@@ -792,11 +905,14 @@ def _ura_code_to_rate(ura_code: str) -> tuple:
       "18"  → Standard VAT 18%  → "01", "0.18"
       "0"   → Zero-rated        → "02", "0"
       "-"   → Exempt            → "03", "-"
+      "00"  → Out of scope      → "11", "0"   (goods vatApplicableFlag "0")
       ""    → fallback to 18%   → "01", "0.18"
     """
     code = (ura_code or "").strip()
     if code in ("18", "0.18"):
         return 18.0, "01", "Standard", "0.18"
+    elif code == "00":
+        return 0.0,  "11", "F: VAT OUT OF SCOPE", "0"
     elif code == "0":
         return 0.0,  "02", "Zero-rated", "0"
     elif code == "-":
@@ -806,8 +922,12 @@ def _ura_code_to_rate(ura_code: str) -> tuple:
         return 18.0, "01", "Standard", "0.18"
 
 
-def _tax_rate_label(ura_rate_str: str) -> str:
+def _tax_rate_label(ura_rate_str: str, category_code: str = "") -> str:
     """Human-readable label for the URA taxRateName field."""
+    if category_code == "04":
+        return "Deemed Vat Invoice"
+    if category_code == "11":
+        return "0%"
     if ura_rate_str == "0.18":
         return "VAT 18%"
     elif ura_rate_str == "0":
@@ -895,6 +1015,10 @@ def _save_result(doc, result: dict):
     # efris_qr_path  → same URL (used by "Verify on URA" button and QR dialog)
     # The "View QR Code" button in efris_utils.js calls get_qr_code_image() server-side
     # to render a PNG on-the-fly from the URL — no need to persist the base64 blob.
+    # Fiscal date = when URA issued the fiscal document (SAP U_CVT_EFRISDATE)
+    issued = str(basic_info.get("issuedDate") or "").strip()
+    if issued:
+        doc.db_set("efris_fiscal_date", issued, update_modified=False)
     if invoice_id:
         doc.db_set("efris_invoice_id",    invoice_id,     update_modified=False)
     if antifake:

@@ -71,6 +71,9 @@ CUSTOM_FIELDS = {
          "insert_after": "efris_invoice_id","read_only": 1, "no_copy": 1,
          "module": "EFRIS Integration"},
 
+        {"fieldname": "efris_fiscal_date",  "fieldtype": "Data",         "label": "EFRIS Fiscal Date",
+         "read_only": 1, "no_copy": 1, "allow_on_submit": 1},
+
         # ── Credit note application (shown on returns only) ───────────────
         {"fieldname": "efris_cn_section",   "fieldtype": "Section Break", "label": "Credit Note Application",
          "depends_on": "eval:doc.is_return"},
