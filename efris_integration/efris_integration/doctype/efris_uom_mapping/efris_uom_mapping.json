@@ -1,85 +1,71 @@
 {
-  "actions": [],
-  "allow_rename": 1,
-  "autoname": "hash",
-  "creation": "2024-01-01 00:00:00.000000",
-  "doctype": "DocType",
-  "engine": "InnoDB",
-  "issingle": 0,
-  "title_field": "uom_name",
-
-  "field_order": [
-    "company",
-    "col_main",
-    "code",
-    "uom_name",
-    "ura_uom"
-  ],
-
-  "fields": [
-    {
-      "fieldname": "company",
-      "fieldtype": "Link",
-      "label": "Company",
-      "options": "Company",
-      "reqd": 1,
-      "in_list_view": 1,
-      "search_index": 1,
-      "bold": 1
-    },
-    { "fieldname": "col_main", "fieldtype": "Column Break" },
-    {
-      "fieldname": "code",
-      "fieldtype": "Data",
-      "label": "Code",
-      "reqd": 1,
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "uom_name",
-      "fieldtype": "Data",
-      "label": "Name",
-      "reqd": 1,
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "ura_uom",
-      "fieldtype": "Data",
-      "label": "URA UOM",
-      "in_list_view": 1
-    }
-  ],
-
-  "module": "EFRIS Integration",
-  "name": "EFRIS UOM Mapping",
-  "permissions": [
-    {
-      "create": 1,
-      "delete": 1,
-      "email": 0,
-      "export": 1,
-      "print": 0,
-      "read": 1,
-      "report": 0,
-      "role": "System Manager",
-      "share": 0,
-      "submit": 0,
-      "write": 1
-    },
-    {
-      "create": 0,
-      "delete": 0,
-      "email": 0,
-      "export": 0,
-      "print": 0,
-      "read": 1,
-      "report": 0,
-      "role": "Accounts Manager",
-      "share": 0,
-      "submit": 0,
-      "write": 1
-    }
-  ],
-  "sort_field": "company",
-  "sort_order": "ASC"
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:company",
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "section_mappings",
+  "mappings"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1,
+   "in_list_view": 1,
+   "bold": 1
+  },
+  {
+   "fieldname": "section_mappings",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "mappings",
+   "fieldtype": "Table",
+   "label": "UOM Mappings",
+   "options": "EFRIS UOM Mapping Item"
+  }
+ ],
+ "issingle": 0,
+ "modified": "2026-10-22 21:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "EFRIS Integration",
+ "name": "EFRIS UOM Mapping",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 0,
+   "export": 1,
+   "print": 0,
+   "read": 1,
+   "report": 0,
+   "role": "System Manager",
+   "share": 0,
+   "submit": 0,
+   "write": 1
+  },
+  {
+   "create": 0,
+   "delete": 0,
+   "email": 0,
+   "export": 0,
+   "print": 0,
+   "read": 1,
+   "report": 0,
+   "role": "Accounts Manager",
+   "share": 0,
+   "submit": 0,
+   "write": 1
+  }
+ ],
+ "sort_field": "company",
+ "sort_order": "ASC",
+ "title_field": "company"
 }

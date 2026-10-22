@@ -16,7 +16,7 @@ from efris_integration.api.session import (
     refresh_session,
     handle_session_error,
 )
-from efris_integration.utils.helpers import log_efris
+from efris_integration.utils.helpers import get_mapped_ura_uom, log_efris
 
 
 # ─── Whitelisted entry point ───────────────────────────────────────────────────
@@ -337,11 +337,7 @@ def _get_efris_uom(erpnext_uom: str, company: str) -> str:
     if not erpnext_uom:
         return "PP"
 
-    ura_uom = frappe.db.get_value(
-        "EFRIS UOM Mapping", {"company": company, "code": erpnext_uom}, "ura_uom"
-    ) or frappe.db.get_value(
-        "EFRIS UOM Mapping", {"company": company, "uom_name": erpnext_uom}, "ura_uom"
-    )
+    ura_uom = get_mapped_ura_uom(erpnext_uom, company)
     if ura_uom:
         code = str(ura_uom).strip()
         if len(code) <= 3:

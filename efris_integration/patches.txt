@@ -1,5 +1,9 @@
+[pre_model_sync]
 efris_integration.patches.v1_0.install_custom_fields
 efris_integration.patches.v1_1.add_item_efris_tab
 efris_integration.patches.v1_2.add_excise_category_fields
 efris_integration.patches.v1_3.show_stock_entry_ura_response_fields
 efris_integration.patches.v1_4.fix_stock_entry_efris_field_copying
+
+[post_model_sync]
+efris_integration.patches.v1_5.convert_mappings_to_child_tables

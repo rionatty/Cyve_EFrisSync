@@ -44,6 +44,7 @@ from efris_integration.api.session import (
 from efris_integration.utils.helpers import (
     efris_num,
     get_efris_settings,
+    get_mapped_ura_uom,
     log_efris,
     now_str,
     resolve_branch_for_doc,
@@ -355,18 +356,7 @@ def _uom_code(erpnext_uom: str, company: str) -> str:
     if not erpnext_uom:
         return "PP"
 
-    db_code = (
-        frappe.db.get_value(
-            "EFRIS UOM Mapping",
-            {"company": company, "code": erpnext_uom},
-            "ura_uom",
-        )
-        or frappe.db.get_value(
-            "EFRIS UOM Mapping",
-            {"company": company, "uom_name": erpnext_uom},
-            "ura_uom",
-        )
-    )
+    db_code = get_mapped_ura_uom(erpnext_uom, company)
     if db_code:
         code = str(db_code).strip()
         if len(code) <= 3:

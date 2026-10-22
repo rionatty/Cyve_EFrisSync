@@ -84,26 +84,29 @@ def get_efris_settings(company: str):
 
 # ── UOM mapping (per-company) ─────────────────────────────────────────────────
 
+def get_mapped_ura_uom(erpnext_uom: str, company: str) -> str:
+    """
+    Return the URA UOM mapped to an ERPNext UOM in the company's EFRIS UOM
+    Mapping table (one record per company, named after it), or "" if none.
+    Matches the row's Code first, then its Name.
+    """
+    for field in ("code", "uom_name"):
+        ura_uom = frappe.db.get_value(
+            "EFRIS UOM Mapping Item",
+            {"parenttype": "EFRIS UOM Mapping", "parent": company, field: erpnext_uom},
+            "ura_uom",
+        )
+        if ura_uom:
+            return ura_uom
+    return ""
+
+
 def map_uom(erpnext_uom: str, company: str) -> str:
     """
     Map an ERPNext UOM to its URA UOM code for the given company.
-    Looks up EFRIS UOM Mapping by company + code field.
     Falls back to the raw UOM string if no mapping found.
     """
-    row = frappe.db.get_value(
-        "EFRIS UOM Mapping",
-        {"company": company, "code": erpnext_uom},
-        "ura_uom",
-    )
-    if row:
-        return row
-    # Try matching by uom_name as fallback
-    row = frappe.db.get_value(
-        "EFRIS UOM Mapping",
-        {"company": company, "uom_name": erpnext_uom},
-        "ura_uom",
-    )
-    return row or erpnext_uom
+    return get_mapped_ura_uom(erpnext_uom, company) or erpnext_uom
 
 
 # ── Tax code mapping (per-company) ────────────────────────────────────────────
@@ -115,8 +118,8 @@ def map_tax_code(erpnext_tax: str, company: str) -> str:
     Falls back to "18" (standard VAT) if not mapped.
     """
     row = frappe.db.get_value(
-        "EFRIS Tax Mapping",
-        {"company": company, "erpnext_tax_code": erpnext_tax},
+        "EFRIS Tax Mapping Item",
+        {"parenttype": "EFRIS Tax Mapping", "parent": company, "erpnext_tax_code": erpnext_tax},
         "ura_tax_code",
     )
     return row or "18"
