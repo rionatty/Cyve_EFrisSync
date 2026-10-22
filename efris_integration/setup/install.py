@@ -236,6 +236,13 @@ CUSTOM_FIELDS = {
          "insert_after": "efris_return_reason_code",       "hidden": 1},
     ],
 
+    # ─── Purchase Invoice (imported from URA) ─────────────────────────────
+    "Purchase Invoice": [
+        {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "EFRIS"},
+        {"fieldname": "efris_fdn_number", "fieldtype": "Data", "label": "URA FDN", "no_copy": 1},
+        {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "URA Invoice ID", "read_only": 1, "no_copy": 1},
+    ],
+
     # ─── Stock Reconciliation ─────────────────────────────────────────────
     "Stock Reconciliation": [
         {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "EFRIS"},
@@ -498,6 +505,7 @@ EFRIS_TAB_ANCHORS = {
     "Sales Order":          None,
     "Delivery Note":        None,
     "Purchase Receipt":     None,
+    "Purchase Invoice":     None,
     "Stock Entry":          None,
     "Stock Reconciliation": None,
     "Customer":             None,

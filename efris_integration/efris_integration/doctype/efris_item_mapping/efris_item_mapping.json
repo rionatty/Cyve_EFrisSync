@@ -1,0 +1,40 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-10-24 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "direction",
+  "party_tin",
+  "column_break",
+  "ura_goods_code",
+  "ura_goods_name",
+  "item_code"
+ ],
+ "fields": [
+  {"fieldname": "company", "fieldtype": "Link", "label": "Company", "options": "Company", "reqd": 1, "in_standard_filter": 1},
+  {"fieldname": "direction", "fieldtype": "Select", "label": "Used For", "options": "Purchase\nSales", "default": "Purchase",
+   "reqd": 1, "in_list_view": 1, "in_standard_filter": 1},
+  {"fieldname": "party_tin", "fieldtype": "Data", "label": "Supplier / Customer TIN", "in_list_view": 1, "in_standard_filter": 1},
+  {"fieldname": "column_break", "fieldtype": "Column Break"},
+  {"fieldname": "ura_goods_code", "fieldtype": "Data", "label": "URA Goods Code", "reqd": 1, "in_list_view": 1, "in_standard_filter": 1},
+  {"fieldname": "ura_goods_name", "fieldtype": "Data", "label": "URA Goods Name"},
+  {"fieldname": "item_code", "fieldtype": "Link", "label": "Item", "options": "Item", "reqd": 1, "in_list_view": 1}
+ ],
+ "modified": "2026-10-24 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "EFRIS Integration",
+ "name": "EFRIS Item Mapping",
+ "owner": "Administrator",
+ "permissions": [
+  {"create": 1, "delete": 1, "export": 1, "read": 1, "report": 1, "role": "System Manager", "write": 1},
+  {"create": 1, "delete": 1, "export": 1, "read": 1, "report": 1, "role": "Accounts Manager", "write": 1},
+  {"create": 1, "delete": 1, "export": 1, "read": 1, "report": 1, "role": "Purchase Manager", "write": 1},
+  {"create": 1, "delete": 1, "export": 1, "read": 1, "report": 1, "role": "Sales Manager", "write": 1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "title_field": "ura_goods_code"
+}

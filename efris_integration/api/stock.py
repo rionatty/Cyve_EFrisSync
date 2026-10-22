@@ -109,6 +109,54 @@ def submit_stock_reconciliation(reconciliation_name: str) -> dict:
     return _run(doc, _stock_reconciliation_parts(doc, settings))
 
 
+@frappe.whitelist()
+def adjust_ura_stock(company: str, warehouse: str, item_codes) -> dict:
+    """
+    EFRIS Stock Reconciliation → "Adjust EFRIS Stock" (SAP B1
+    StockReconciliation.cs). Re-reads ERPNext and URA quantities now, then
+    brings URA in line: ERPNext higher → T131 stock in (Local Purchase, own
+    TIN as supplier); URA higher → T131 stock out (Others, reason given).
+    """
+    from frappe.utils import today
+    from efris_integration.api.ura_data import branch_stock, goods_catalogue
+
+    item_codes = frappe.parse_json(item_codes) if isinstance(item_codes, str) else item_codes
+    settings = get_efris_settings(company)
+    branch_id = _branch(warehouse, settings)[0] if settings.multi_branch else ""
+    catalogue = goods_catalogue(company)
+
+    ups, downs, skipped = [], [], []
+    for code in item_codes or []:
+        goods = catalogue.get(code)
+        if not goods:
+            skipped.append(f"{code}: not registered on URA")
+            continue
+        erp = flt_bin(code, warehouse)
+        ura = branch_stock(company, goods["id"], branch_id) if branch_id else goods["stock"]
+        diff = round(erp - ura, 6)
+        if not diff:
+            continue
+        price = safe_float(frappe.db.get_value("Bin", {"item_code": code, "warehouse": warehouse}, "valuation_rate")
+                           or frappe.db.get_value("Item", code, "valuation_rate"))
+        uom = frappe.db.get_value("Item", code, "stock_uom")
+        (ups if diff > 0 else downs).append(_line(code, uom, abs(diff), price, warehouse))
+
+    pseudo = frappe._dict(doctype="Warehouse", name=warehouse, company=company, posting_date=today())
+    marker = f"ERPNext Stock Reconciliation: {warehouse}"
+    parts = _t131_parts(pseudo, settings, "IN", STOCK_IN, ups, stock_in_type=STOCK_IN_LOCAL,
+                        supplier_name=settings.get("legal_name") or company,
+                        supplier_tin=settings.get("tin") or "", remarks=marker)
+    parts += _t131_parts(pseudo, settings, "OUT", STOCK_OUT, downs, adjust_type=ADJUST_OTHERS,
+                         remarks=_remarks(marker, "Stock reconciliation with ERPNext"))
+    sent = {key: send() or "OK" for key, send in parts}
+    frappe.cache().delete_value(f"efris_t127:{company}")
+    return {"sent": sent, "increased": len(ups), "reduced": len(downs), "skipped": skipped}
+
+
+def flt_bin(item_code: str, warehouse: str) -> float:
+    return safe_float(frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty"))
+
+
 # ─── Called from on_submit hooks ──────────────────────────────────────────────
 
 def auto_submit(doc) -> None:
