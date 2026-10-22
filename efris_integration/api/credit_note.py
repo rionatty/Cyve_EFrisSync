@@ -56,14 +56,21 @@ def submit_credit_note(invoice_name: str, reason_code: str = "101", reason: str 
     if not return_against:
         frappe.throw("Credit note must reference an original invoice (Return Against).")
 
-    ori_invoice_id = frappe.db.get_value("Sales Invoice", return_against, "efris_invoice_id")
+    ori_invoice_id, ori_invoice_no = frappe.db.get_value(
+        "Sales Invoice", return_against, ["efris_invoice_id", "efris_fdn_number"]
+    ) or (None, None)
     if not ori_invoice_id:
         frappe.throw(
             f"Original invoice {return_against} has not been submitted to EFRIS. "
             "Submit it first before issuing a credit note."
         )
-
-    ori_invoice_no = return_against
+    # URA identifies the original by its FDN (fiscal document number), not the ERPNext name.
+    if not ori_invoice_no:
+        frappe.throw(
+            f"Original invoice {return_against} has no FDN yet. Open it and use "
+            "<b>EFRIS → Refresh from EFRIS</b> to fetch its FDN, then try again.",
+            title="Original FDN Missing",
+        )
     settings = get_efris_settings(doc.company)
     resolve_branch_for_doc(doc, settings)   # multi-branch: resolve from warehouse
 

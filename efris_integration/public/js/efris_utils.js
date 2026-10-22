@@ -59,6 +59,19 @@ window.efris_call = function (frm, method, args, reload) {
 };
 
 
+// ── Ask before sending to EFRIS ───────────────────────────────────────────────
+// efris_confirm_and_call(frm, message, fn): show `message`, run `fn` on Yes.
+window.efris_confirm_and_call = function (frm, message, fn) {
+    frappe.confirm(message, function () {
+        try {
+            fn();
+        } catch (e) {
+            console.warn("EFRIS action error:", e);
+        }
+    });
+};
+
+
 // ── Open EFRIS Log list filtered to this document ─────────────────────────────
 window.efris_open_log = function (frm) {
     frappe.set_route("List", "EFRIS Log", {

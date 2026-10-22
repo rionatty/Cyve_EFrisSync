@@ -7,3 +7,4 @@ efris_integration.patches.v1_4.fix_stock_entry_efris_field_copying
 
 [post_model_sync]
 efris_integration.patches.v1_5.convert_mappings_to_child_tables
+efris_integration.patches.v1_6.purchase_receipt_stock_in_labels

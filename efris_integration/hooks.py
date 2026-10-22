@@ -13,7 +13,6 @@ app_license = "MIT"
 doctype_js = {
     "Sales Invoice":      "public/js/sales_invoice.js",
     "Sales Order":        "public/js/sales_order.js",
-    "Delivery Note":      "public/js/delivery_note.js",
     "Purchase Receipt":   "public/js/purchase_receipt.js",
     "Stock Entry":        "public/js/stock_entry.js",
     "Stock Reconciliation": "public/js/stock_reconciliation.js",
@@ -32,12 +31,8 @@ doc_events = {
         "on_submit": "efris_integration.overrides.sales_invoice.on_submit",
         "on_cancel":  "efris_integration.overrides.sales_invoice.on_cancel",
     },
-    "Sales Order": {
-        "on_submit": "efris_integration.overrides.sales_order.on_submit",
-    },
-    "Delivery Note": {
-        "on_submit": "efris_integration.overrides.delivery_note.on_submit",
-    },
+    # Sales Order / Delivery Note are not sent to URA: the Sales Invoice is the
+    # fiscal document (sending them as T109 would fiscalise the sale twice).
     "Stock Entry": {
         "on_submit": "efris_integration.overrides.stock_entry.on_submit",
     },

@@ -8,7 +8,7 @@ import frappe
 
 from efris_integration.api.invoice import submit_sales_invoice
 from efris_integration.api.credit_note import submit_credit_note
-from efris_integration.api.stock import submit_purchase_receipt, submit_stock_receipt, submit_stock_issue
+from efris_integration.api.stock import submit_purchase_receipt, submit_stock_entry
 
 
 @frappe.whitelist()
@@ -60,17 +60,12 @@ def _handle_sales_invoice(name: str):
 
 
 def _handle_purchase_receipt(name: str):
-    doc = frappe.get_doc("Purchase Receipt", name)
-    if doc.get("efris_invoice_id"):
+    if frappe.db.get_value("Purchase Receipt", name, "efris_status") == "Submitted":
         return
     submit_purchase_receipt(name)
 
 
 def _handle_stock_entry(name: str):
-    doc = frappe.get_doc("Stock Entry", name)
-    if doc.get("efris_invoice_id"):
+    if frappe.db.get_value("Stock Entry", name, "efris_status") == "Submitted":
         return
-    if doc.stock_entry_type in ("Material Receipt", "Manufacture"):
-        submit_stock_receipt(name)
-    elif doc.stock_entry_type in ("Material Issue", "Material Transfer for Manufacture", "Send to Subcontractor"):
-        submit_stock_issue(name)
+    submit_stock_entry(name)

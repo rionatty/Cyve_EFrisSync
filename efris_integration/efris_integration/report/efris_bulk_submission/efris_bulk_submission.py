@@ -61,7 +61,7 @@ def get_data(doctype, from_date, to_date):
             SELECT name, posting_date, supplier, grand_total, efris_status
             FROM `tabPurchase Receipt`
             WHERE docstatus = 1
-              AND (efris_invoice_id IS NULL OR efris_invoice_id = '')
+              AND IFNULL(efris_status, '') != 'Submitted'
               AND posting_date BETWEEN %(from_date)s AND %(to_date)s
             ORDER BY posting_date DESC
         """, {"from_date": from_date, "to_date": to_date}, as_dict=True)
@@ -73,10 +73,10 @@ def get_data(doctype, from_date, to_date):
             FROM `tabStock Entry`
             WHERE docstatus = 1
               AND stock_entry_type IN (
-                  'Material Receipt','Material Issue','Manufacture',
-                  'Material Transfer for Manufacture','Send to Subcontractor'
+                  'Material Receipt','Material Issue','Manufacture','Repack',
+                  'Send to Subcontractor','Material Transfer'
               )
-              AND (efris_invoice_id IS NULL OR efris_invoice_id = '')
+              AND IFNULL(efris_status, '') != 'Submitted'
               AND posting_date BETWEEN %(from_date)s AND %(to_date)s
             ORDER BY posting_date DESC
         """, {"from_date": from_date, "to_date": to_date}, as_dict=True)

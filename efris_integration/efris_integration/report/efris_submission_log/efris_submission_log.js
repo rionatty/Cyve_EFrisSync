@@ -4,7 +4,7 @@ frappe.query_reports["EFRIS Submission Log"] = {
             fieldname: "interface_code",
             label: __("Interface Code"),
             fieldtype: "Select",
-            options: "\nT101\nT102\nT103\nT104\nT106\nT108\nT109\nT110\nT111\nT114\nT115\nT119\nT120\nT126",
+            options: "\nT101\nT102\nT103\nT104\nT106\nT108\nT109\nT110\nT111\nT114\nT115\nT119\nT120\nT126\nT130\nT131\nT138\nT139",
         },
         {
             fieldname: "status",

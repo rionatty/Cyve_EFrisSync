@@ -23,6 +23,14 @@ import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 
+# Stock Entry URA-tab fields shown only for the entry types that use them.
+SE_RECEIPT = "eval:doc.stock_entry_type=='Material Receipt'"
+SE_ISSUE = "eval:in_list(['Material Issue','Send to Subcontractor'], doc.stock_entry_type)"
+SE_TRANSFER = "eval:doc.stock_entry_type=='Material Transfer'"
+SE_ISSUE_OR_TRANSFER = (
+    "eval:in_list(['Material Issue','Send to Subcontractor','Material Transfer'], doc.stock_entry_type)"
+)
+
 CUSTOM_FIELDS = {
 
     # ─── Sales Invoice (AR Invoice + Credit Note) ─────────────────────────
@@ -111,13 +119,15 @@ CUSTOM_FIELDS = {
     "Purchase Receipt": [
         {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "EFRIS"},
         {"fieldname": "efris_stock_in_option", "fieldtype": "Select", "label": "EFRIS Stock-In Type",
-         "options": "\n101\n102\n103\n104",
-         "default": "102"},
-        {"fieldname": "efris_supplier_tin", "fieldtype": "Data", "label": "Supplier TIN (EFRIS)"},
+         "options": "\nImport\nLocal Purchase\nManufacture/Assembling\nOpening Stock",
+         "default": "Local Purchase", "allow_on_submit": 1, "depends_on": "eval:!doc.is_return"},
+        {"fieldname": "efris_supplier_tin", "fieldtype": "Data", "label": "Supplier TIN (EFRIS)",
+         "allow_on_submit": 1, "depends_on": "eval:!doc.is_return"},
         {"fieldname": "efris_col_break", "fieldtype": "Column Break"},
-        {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "EFRIS Invoice ID", "read_only": 1},
-        {"fieldname": "efris_status", "fieldtype": "Select", "label": "EFRIS Status", "options": "\nPending\nSubmitted\nFailed", "read_only": 1},
-        {"fieldname": "efris_submitted_at", "fieldtype": "Datetime", "label": "EFRIS Submitted At", "read_only": 1},
+        {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "URA Reference No", "read_only": 1, "no_copy": 1},
+        {"fieldname": "efris_status", "fieldtype": "Select", "label": "EFRIS Status", "options": "\nPending\nSubmitted\nFailed", "read_only": 1, "no_copy": 1},
+        {"fieldname": "efris_submitted_at", "fieldtype": "Datetime", "label": "EFRIS Submitted At", "read_only": 1, "no_copy": 1},
+        {"fieldname": "efris_ura_remark", "fieldtype": "Small Text", "label": "URA Remark", "read_only": 1, "no_copy": 1},
     ],
 
     # ─── Stock Entry ──────────────────────────────────────────────────────
@@ -135,11 +145,25 @@ CUSTOM_FIELDS = {
         {"fieldname": "efris_stock_in_type",  "fieldtype": "Select",        "label": "Stock In Type",
          "insert_after": "efris_section",
          "options": "\nImport\nLocal Purchase\nManufacture/Assembling\nOpening Stock",
-         "allow_on_submit": 1,
+         "allow_on_submit": 1, "depends_on": SE_RECEIPT,
          "module": "EFRIS Integration"},
         {"fieldname": "efris_supplier_name",  "fieldtype": "Data",          "label": "Supplier Name",
          "insert_after": "efris_stock_in_type",
-         "allow_on_submit": 1},
+         "allow_on_submit": 1, "depends_on": SE_RECEIPT},
+        {"fieldname": "efris_supplier_tin",   "fieldtype": "Data",          "label": "Supplier TIN",
+         "allow_on_submit": 1, "depends_on": SE_RECEIPT, "hidden": 0},   # was hidden before
+        # Stock out (Material Issue / Send to Subcontractor)
+        {"fieldname": "efris_adjust_type",    "fieldtype": "Select",        "label": "Adjust Type",
+         "options": "\nExpired Goods\nDamaged Goods\nPersonal Uses\nOthers\nRaw Materials",
+         "allow_on_submit": 1, "depends_on": SE_ISSUE},
+        # Branch transfer (Material Transfer between URA branches)
+        {"fieldname": "efris_transfer_type",  "fieldtype": "Select",        "label": "Transfer Type",
+         "options": "\nOut of Stock Adjust\nError Adjust\nOthers",
+         "allow_on_submit": 1, "depends_on": SE_TRANSFER},
+        {"fieldname": "efris_vehicle_no",     "fieldtype": "Data",          "label": "Vehicle No",
+         "allow_on_submit": 1, "depends_on": SE_TRANSFER},
+        {"fieldname": "efris_adjust_reason",  "fieldtype": "Small Text",    "label": "Reason",
+         "allow_on_submit": 1, "depends_on": SE_ISSUE_OR_TRANSFER},
 
         # ── Column Break ──────────────────────────────────────────────────────
         {"fieldname": "efris_col_break",      "fieldtype": "Column Break",
@@ -157,13 +181,11 @@ CUSTOM_FIELDS = {
          "module": "EFRIS Integration"},
 
         # ── URA response fields (visible — written on T131 success) ─────────
-        {"fieldname": "efris_supplier_tin",               "fieldtype": "Data",     "label": "Supplier TIN (EFRIS)",
-         "insert_after": "efris_ura_remark",               "hidden": 1, "allow_on_submit": 1},
         {
             "fieldname":      "efris_invoice_id",
             "fieldtype":      "Data",
             "label":          "URA Reference No",
-            "insert_after":   "efris_supplier_tin",
+            "insert_after":   "efris_ura_remark",
             "read_only":      1,
             "no_copy":        1,   # prevent Sales Invoice efris_invoice_id being copied here
             "allow_on_submit": 1,
@@ -207,9 +229,10 @@ CUSTOM_FIELDS = {
     # ─── Stock Reconciliation ─────────────────────────────────────────────
     "Stock Reconciliation": [
         {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "EFRIS"},
-        {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "EFRIS Invoice ID", "read_only": 1},
-        {"fieldname": "efris_status", "fieldtype": "Select", "label": "EFRIS Status", "options": "\nPending\nSubmitted\nFailed", "read_only": 1},
-        {"fieldname": "efris_submitted_at", "fieldtype": "Datetime", "label": "EFRIS Submitted At", "read_only": 1},
+        {"fieldname": "efris_invoice_id", "fieldtype": "Data", "label": "URA Reference No", "read_only": 1, "no_copy": 1},
+        {"fieldname": "efris_status", "fieldtype": "Select", "label": "EFRIS Status", "options": "\nPending\nSubmitted\nFailed", "read_only": 1, "no_copy": 1},
+        {"fieldname": "efris_submitted_at", "fieldtype": "Datetime", "label": "EFRIS Submitted At", "read_only": 1, "no_copy": 1},
+        {"fieldname": "efris_ura_remark", "fieldtype": "Small Text", "label": "URA Remark", "read_only": 1, "no_copy": 1},
     ],
 
     # ─── Item ──────────────────────────────────────────────────────────────
