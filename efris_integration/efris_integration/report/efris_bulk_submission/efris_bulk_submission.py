@@ -19,8 +19,13 @@ def execute(filters=None):
     from_date = filters.get("from_date") or frappe.utils.add_months(frappe.utils.today(), -1)
     to_date = filters.get("to_date") or frappe.utils.today()
 
+    # Only companies set up for EFRIS (EFRIS Settings is named after the company)
+    companies = [filters["company"]] if filters.get("company") else frappe.get_all("EFRIS Settings", pluck="name")
+    companies = [c for c in companies if frappe.db.exists("EFRIS Settings", c)]
     columns = get_columns(doctype)
-    data = get_data(doctype, from_date, to_date)
+    if not companies:
+        return columns, [], "This company has no EFRIS Settings, so nothing can be sent to URA."
+    data = get_data(doctype, from_date, to_date, companies)
     return columns, data
 
 
@@ -44,7 +49,7 @@ def get_columns(doctype):
     return base
 
 
-def get_data(doctype, from_date, to_date):
+def get_data(doctype, from_date, to_date, companies):
     if doctype == "Sales Invoice":
         return frappe.db.sql("""
             SELECT name, posting_date, customer, grand_total,
@@ -52,9 +57,12 @@ def get_data(doctype, from_date, to_date):
             FROM `tabSales Invoice`
             WHERE docstatus = 1
               AND (efris_invoice_id IS NULL OR efris_invoice_id = '')
+              AND NOT (is_return = 1 AND IFNULL(efris_cn_reference_no, '') != ''
+                       AND IFNULL(efris_cn_approval, '') NOT IN ('Rejected', 'Voided'))
+              AND company IN %(companies)s
               AND posting_date BETWEEN %(from_date)s AND %(to_date)s
             ORDER BY posting_date DESC
-        """, {"from_date": from_date, "to_date": to_date}, as_dict=True)
+        """, {"from_date": from_date, "to_date": to_date, "companies": tuple(companies)}, as_dict=True)
 
     elif doctype == "Purchase Receipt":
         return frappe.db.sql("""
@@ -62,9 +70,10 @@ def get_data(doctype, from_date, to_date):
             FROM `tabPurchase Receipt`
             WHERE docstatus = 1
               AND IFNULL(efris_status, '') != 'Submitted'
+              AND company IN %(companies)s
               AND posting_date BETWEEN %(from_date)s AND %(to_date)s
             ORDER BY posting_date DESC
-        """, {"from_date": from_date, "to_date": to_date}, as_dict=True)
+        """, {"from_date": from_date, "to_date": to_date, "companies": tuple(companies)}, as_dict=True)
 
     elif doctype == "Stock Entry":
         return frappe.db.sql("""
@@ -77,8 +86,9 @@ def get_data(doctype, from_date, to_date):
                   'Send to Subcontractor','Material Transfer'
               )
               AND IFNULL(efris_status, '') != 'Submitted'
+              AND company IN %(companies)s
               AND posting_date BETWEEN %(from_date)s AND %(to_date)s
             ORDER BY posting_date DESC
-        """, {"from_date": from_date, "to_date": to_date}, as_dict=True)
+        """, {"from_date": from_date, "to_date": to_date, "companies": tuple(companies)}, as_dict=True)
 
     return []

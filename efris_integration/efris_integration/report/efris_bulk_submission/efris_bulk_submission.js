@@ -7,6 +7,14 @@ frappe.query_reports["EFRIS Bulk Submission"] = {
 
     filters: [
         {
+            fieldname: "company",
+            label: __("Company"),
+            fieldtype: "Link",
+            options: "Company",
+            default: frappe.defaults.get_user_default("Company"),
+            reqd: 1,
+        },
+        {
             fieldname: "doctype",
             label: __("Document Type"),
             fieldtype: "Select",
