@@ -25,7 +25,26 @@ def on_submit(doc, method):
 
 
 def on_cancel(doc, method):
-    """Warn the user that EFRIS invoices cannot be cancelled — use Credit Note."""
+    """
+    Credit note sent to EFRIS → cancel it there too (T120 void if still pending,
+    T114 cancellation if approved). Never blocks the ERPNext cancel; on failure
+    the user retries with EFRIS → Cancel in EFRIS.
+    Normal invoice → warn: URA has no cancellation, issue a credit note.
+    """
+    if doc.is_return:
+        if doc.get("efris_cn_reference_no") and doc.get("efris_cn_approval") in ("Pending", "Approved"):
+            try:
+                from efris_integration.api.credit_note import cancel_credit_note_in_efris
+                cancel_credit_note_in_efris(doc.name)
+            except Exception as exc:
+                frappe.log_error(frappe.get_traceback(), f"EFRIS credit note cancel {doc.name}")
+                frappe.msgprint(
+                    f"Cancelled in ERPNext, but not in EFRIS: {exc}<br>"
+                    "Use <b>EFRIS → Cancel in EFRIS</b> to try again.",
+                    title="EFRIS", indicator="orange",
+                )
+        return
+
     if doc.get("efris_invoice_id"):
         frappe.msgprint(
             "⚠️  This invoice was already submitted to EFRIS "

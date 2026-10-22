@@ -230,3 +230,33 @@ def throw_session_key_error(t_code: str, company: str, orig_code: str, orig_msg:
         f"update the key and try again.",
         title=f"EFRIS {t_code} — Session Error",
     )
+
+
+def call_with_session(client: EFRISClient, company: str, t_code: str, payload,
+                      doc_type: str = "", doc_name: str = ""):
+    """
+    Make one URA call with the session key loaded; on a session error, fetch a
+    fresh key (T104) and retry once. A second session error throws the
+    standard "update the Session AES Key" message.
+    """
+    from efris_integration.api.base import EFRISAPIError
+
+    ensure_session(client, company)
+    try:
+        return client.call(t_code, payload, encrypt=True, sign=True,
+                           doc_type=doc_type, doc_name=doc_name)
+    except EFRISAPIError as exc:
+        if exc.code not in SESSION_ERRORS:
+            raise
+        first = exc
+    try:
+        refresh_session(client, company)
+    except Exception:
+        handle_session_error(t_code, company, first, doc_type, doc_name)
+    try:
+        return client.call(t_code, payload, encrypt=True, sign=True,
+                           doc_type=doc_type, doc_name=doc_name)
+    except EFRISAPIError as exc:
+        if exc.code in SESSION_ERRORS:
+            handle_session_error(t_code, company, exc, doc_type, doc_name)
+        raise

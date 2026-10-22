@@ -1,6 +1,6 @@
 {
   "charts": [],
-  "content": "[{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>EFRIS Configuration</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"UOM Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"TaxCode Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Exchange Rate Sync\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Invoicing</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Order\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Delivery Note\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Stock Movements</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Receipt\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Entry\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Reconciliation\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports & Logs</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Bulk Submission\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Submission Log\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Log\",\"col\":3}}]",
+  "content": "[{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>EFRIS Configuration</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"UOM Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"TaxCode Setting\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Exchange Rate Sync\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Invoicing</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Order\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Delivery Note\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Stock Movements</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Receipt\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Entry\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Reconciliation\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports & Logs</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Bulk Submission\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Credit Notes\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Submission Log\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"EFRIS Log\",\"col\":3}}]",
   "doctype": "Workspace",
   "hide_custom": 0,
   "is_hidden": 0,
@@ -115,6 +115,14 @@
     {
       "color": "Green",
       "doc_view": "",
+      "label": "EFRIS Credit Notes",
+      "link_to": "EFRIS Credit Notes",
+      "name": "EFRIS Credit Notes",
+      "type": "Report"
+    },
+    {
+      "color": "Green",
+      "doc_view": "",
       "label": "EFRIS Submission Log",
       "link_to": "EFRIS Submission Log",
       "name": "EFRIS Submission Log",
@@ -130,5 +138,6 @@
       "type": "DocType"
     }
   ],
-  "title": "EFRIS Integration"
+  "title": "EFRIS Integration",
+  "modified": "2026-10-23 00:00:00.000000"
 }

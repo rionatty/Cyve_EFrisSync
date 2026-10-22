@@ -43,6 +43,13 @@ function _efris_refresh(frm) {
         try { efris_add_status_badge(frm); } catch (e) { console.warn("EFRIS badge error:", e); }
     }
 
+    // Credit notes have their own lifecycle (upload, approval, cancel)
+    var is_return = (frm.doc.is_return === 1 || frm.doc.is_return === true);
+    if (is_return) {
+        _credit_note_buttons(frm);
+        return;
+    }
+
     // EFRIS buttons only make sense on submitted documents (docstatus === 1)
     if (frm.doc.docstatus !== 1) {
         console.log("[EFRIS JS v2.1] docstatus != 1 — no EFRIS buttons added");
@@ -55,33 +62,22 @@ function _efris_refresh(frm) {
     // ──────────────────────────────────────────────────────────────────────────
     if (!frm.doc.efris_invoice_id) {
 
-        var is_return = (frm.doc.is_return === 1 || frm.doc.is_return === true);
-        var btn_label = is_return
-            ? __("Upload Credit Note to EFRIS")
-            : __("Upload to EFRIS");
-
-        console.log("[EFRIS JS v2.1] adding standalone primary button: " + btn_label);
-
         // Third argument intentionally omitted → standalone button (not in dropdown)
-        var $primary = frm.add_custom_button(btn_label, function () {
+        var $primary = frm.add_custom_button(__("Upload to EFRIS"), function () {
             frappe.confirm(
                 __("Submit this invoice to URA EFRIS?"),
                 function () {                         // on YES
-                    if (is_return) {
-                        _credit_note_dialog(frm);
-                    } else {
-                        frappe.call({
-                            method: "efris_integration.api.invoice.submit_sales_invoice",
-                            args: { invoice_name: frm.doc.name },
-                            freeze: true,
-                            freeze_message: __("Submitting to EFRIS — please wait..."),
-                            callback: function (r) {
-                                if (!r.exc) {
-                                    frm.reload_doc();
-                                }
+                    frappe.call({
+                        method: "efris_integration.api.invoice.submit_sales_invoice",
+                        args: { invoice_name: frm.doc.name },
+                        freeze: true,
+                        freeze_message: __("Submitting to EFRIS — please wait..."),
+                        callback: function (r) {
+                            if (!r.exc) {
+                                frm.reload_doc();
                             }
-                        });
-                    }
+                        }
+                    });
                 }
             );
         });
@@ -171,30 +167,93 @@ function _efris_refresh(frm) {
 }
 
 
-// ── Credit Note reason-code dialog ────────────────────────────────────────────
+// ── Credit note buttons ───────────────────────────────────────────────────────
+//   not sent / rejected / voided -> [Upload Credit Note to EFRIS]  (primary)
+//   Pending                      -> [Check EFRIS Status]           (primary)
+//   Pending or Approved          -> EFRIS > Cancel in EFRIS (also after ERPNext cancel)
+
+function _credit_note_buttons(frm) {
+    var ref = frm.doc.efris_cn_reference_no;
+    var approval = frm.doc.efris_cn_approval || "";
+    var can_resend = !ref || approval === "Rejected" || approval === "Voided";
+
+    function primary(label, fn) {
+        var $b = frm.add_custom_button(label, fn);
+        if ($b && typeof $b.addClass === "function") $b.addClass("btn-primary");
+    }
+
+    if (frm.doc.docstatus === 1 && can_resend) {
+        primary(__("Upload Credit Note to EFRIS"), function () { _credit_note_dialog(frm); });
+    }
+
+    if (ref && frm.doc.docstatus >= 1) {
+        var check = function () {
+            frappe.call({
+                method: "efris_integration.api.credit_note.check_credit_note_status",
+                args: { invoice_name: frm.doc.name },
+                freeze: true,
+                freeze_message: __("Checking credit note status with URA..."),
+                callback: function (r) { if (!r.exc) frm.reload_doc(); }
+            });
+        };
+        if (approval === "Pending") {
+            primary(__("Check EFRIS Status"), check);
+        } else {
+            frm.add_custom_button(__("Check EFRIS Status"), check, __("EFRIS"));
+        }
+    }
+
+    if (ref && (approval === "Pending" || approval === "Approved") && frm.doc.docstatus >= 1) {
+        frm.add_custom_button(__("Cancel in EFRIS"), function () {
+            efris_confirm_and_call(frm,
+                approval === "Pending"
+                    ? __("Void credit note application {0} in EFRIS?", [ref])
+                    : __("Ask URA to cancel approved credit note {0}?", [frm.doc.efris_fdn_number || ref]),
+                function () {
+                    efris_call(frm, "efris_integration.api.credit_note.cancel_credit_note_in_efris",
+                        { invoice_name: frm.doc.name });
+                });
+        }, __("EFRIS"));
+    }
+
+    if (frm.doc.efris_qr_path) {
+        frm.add_custom_button(__("View QR Code"), function () { efris_show_qr(frm); }, __("EFRIS"));
+        frm.add_custom_button(__("Verify on URA"), function () {
+            window.open(frm.doc.efris_qr_path, "_blank");
+        }, __("EFRIS"));
+    }
+
+    if (frm.doc.docstatus >= 1) {
+        frm.add_custom_button(__("EFRIS Log"), function () { efris_open_log(frm); }, __("EFRIS"));
+    }
+}
+
+
+// ── Credit Note reason dialog ─────────────────────────────────────────────────
 
 function _credit_note_dialog(frm) {
     var d = new frappe.ui.Dialog({
         title: __("Upload Credit Note to EFRIS"),
         fields: [
             {
-                label: __("Reason Code"),
+                label: __("Reason"),
                 fieldname: "reason_code",
                 fieldtype: "Select",
                 options: [
-                    { value: "101", label: "101 - Sales Return" },
-                    { value: "102", label: "102 - Cancellation" },
-                    { value: "103", label: "103 - Pricing Error" },
-                    { value: "104", label: "104 - Duplicate Invoice" },
-                    { value: "105", label: "105 - Other" }
+                    { value: "101", label: __("Return of products due to expiry or damage, etc.") },
+                    { value: "102", label: __("Cancellation of the purchase") },
+                    { value: "103", label: __("Invoice amount wrong") },
+                    { value: "104", label: __("Partial or complete waive off") },
+                    { value: "105", label: __("Others (describe below)") }
                 ],
                 reqd: 1,
-                default: "101"
+                default: "102"
             },
             {
-                label: __("Reason Description"),
+                label: __("Description"),
                 fieldname: "reason",
-                fieldtype: "Small Text"
+                fieldtype: "Small Text",
+                mandatory_depends_on: "eval:doc.reason_code=='105'"
             }
         ],
         primary_action_label: __("Upload"),

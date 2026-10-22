@@ -45,38 +45,54 @@ CUSTOM_FIELDS = {
         {"fieldname": "efris_col_left",     "fieldtype": "Section Break","label": "",
          "insert_after": "efris_tab",       "module": "EFRIS Integration"},
 
+        # no_copy on every URA result field: "Create > Return / Credit Note"
+        # must not carry the original invoice's FDN / ID / QR onto the credit note.
         {"fieldname": "efris_qr_code",      "fieldtype": "Small Text",   "label": "QR Code",
-         "insert_after": "efris_col_left",  "read_only": 1,
+         "insert_after": "efris_col_left",  "read_only": 1, "no_copy": 1,
          "module": "EFRIS Integration"},
 
         {"fieldname": "efris_qr_path",      "fieldtype": "Small Text",   "label": "QR Validation URL",
-         "insert_after": "efris_qr_code",   "read_only": 1,
+         "insert_after": "efris_qr_code",   "read_only": 1, "no_copy": 1,
          "module": "EFRIS Integration"},
 
         {"fieldname": "efris_antifake_code","fieldtype": "Data",         "label": "Verification Code",
-         "insert_after": "efris_qr_path",   "read_only": 1,
+         "insert_after": "efris_qr_path",   "read_only": 1, "no_copy": 1,
          "module": "EFRIS Integration"},
 
         {"fieldname": "efris_fdn_number",   "fieldtype": "Data",         "label": "FDN Number",
-         "insert_after": "efris_antifake_code", "read_only": 1,
+         "insert_after": "efris_antifake_code", "read_only": 1, "no_copy": 1,
          "module": "EFRIS Integration"},
 
         {"fieldname": "efris_invoice_id",   "fieldtype": "Data",         "label": "Invoice ID",
-         "insert_after": "efris_fdn_number","read_only": 1,
+         "insert_after": "efris_fdn_number","read_only": 1, "no_copy": 1,
          "module": "EFRIS Integration"},
 
         {"fieldname": "efris_remark",       "fieldtype": "Small Text",   "label": "Remark",
-         "insert_after": "efris_invoice_id","read_only": 1,
+         "insert_after": "efris_invoice_id","read_only": 1, "no_copy": 1,
          "module": "EFRIS Integration"},
+
+        # ── Credit note application (shown on returns only) ───────────────
+        {"fieldname": "efris_cn_section",   "fieldtype": "Section Break", "label": "Credit Note Application",
+         "depends_on": "eval:doc.is_return"},
+        {"fieldname": "efris_cn_reference_no", "fieldtype": "Data",      "label": "Application Reference",
+         "read_only": 1, "no_copy": 1, "allow_on_submit": 1},
+        {"fieldname": "efris_cn_approval",  "fieldtype": "Select",       "label": "Approval Status",
+         "options": "\nPending\nApproved\nRejected\nVoided\nCancel Requested",
+         "read_only": 1, "no_copy": 1, "allow_on_submit": 1},
+        {"fieldname": "efris_cn_col",       "fieldtype": "Column Break"},
+        {"fieldname": "efris_cn_approval_date", "fieldtype": "Data",     "label": "Approved On",
+         "read_only": 1, "no_copy": 1, "allow_on_submit": 1},
+        {"fieldname": "efris_cn_reason",    "fieldtype": "Data",         "label": "Credit Note Reason",
+         "read_only": 1, "no_copy": 1, "allow_on_submit": 1},
 
         # ── Hidden legacy / internal fields ───────────────────────────────
         {"fieldname": "efris_status",       "fieldtype": "Select",       "label": "EFRIS Status",
          "insert_after": "efris_remark",
          "options": "\nPending\nSubmitted\nCredit Note Submitted\nFailed",
-         "read_only": 1, "hidden": 1,      "module": "EFRIS Integration"},
+         "read_only": 1, "hidden": 1, "no_copy": 1, "module": "EFRIS Integration"},
 
         {"fieldname": "efris_submitted_at", "fieldtype": "Datetime",     "label": "EFRIS Submitted At",
-         "insert_after": "efris_status",    "read_only": 1, "hidden": 1,
+         "insert_after": "efris_status",    "read_only": 1, "hidden": 1, "no_copy": 1,
          "module": "EFRIS Integration"},
 
         {"fieldname": "efris_branch_id",    "fieldtype": "Data",         "label": "EFRIS Branch ID",

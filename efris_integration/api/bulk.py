@@ -51,11 +51,10 @@ def bulk_submit(doctype: str, names: list | str) -> dict:
 
 def _handle_sales_invoice(name: str):
     doc = frappe.get_doc("Sales Invoice", name)
-    if doc.get("efris_invoice_id"):
-        return  # already done
     if doc.is_return:
-        submit_credit_note(name)
-    else:
+        if not doc.get("efris_cn_reference_no"):
+            submit_credit_note(name, show_message=False)
+    elif not doc.get("efris_invoice_id"):
         submit_sales_invoice(name)
 
 

@@ -38,12 +38,7 @@ Mirrors: GoodsReceipt.cs, GoodsIssue.cs, GRPO.cs, GoodsReturn.cs,
 import frappe
 
 from efris_integration.api.base import EFRISClient, EFRISAPIError
-from efris_integration.api.session import (
-    SESSION_ERRORS,
-    ensure_session,
-    handle_session_error,
-    refresh_session,
-)
+from efris_integration.api.session import call_with_session
 from efris_integration.utils.helpers import (
     efris_num,
     get_efris_settings,
@@ -433,23 +428,7 @@ def _parse_done(text: str) -> dict:
 def _send(doc, code: str, payload: dict, branch: tuple) -> str:
     client = EFRISClient(company=doc.company)
     client.settings.branch_id, client.settings.branch_name = branch[0], branch[1]
-    ensure_session(client, doc.company)
-    try:
-        result = client.call(code, payload, encrypt=True, sign=True,
-                             doc_type=doc.doctype, doc_name=doc.name)
-    except EFRISAPIError as exc:
-        if exc.code not in SESSION_ERRORS:
-            raise
-        try:
-            refresh_session(client, doc.company)
-            result = client.call(code, payload, encrypt=True, sign=True,
-                                 doc_type=doc.doctype, doc_name=doc.name)
-        except EFRISAPIError as exc2:
-            if exc2.code in SESSION_ERRORS:
-                handle_session_error(code, doc.company, exc2, doc.doctype, doc.name)
-            raise
-        except Exception:
-            handle_session_error(code, doc.company, exc, doc.doctype, doc.name)
+    result = call_with_session(client, doc.company, code, payload, doc.doctype, doc.name)
 
     errors = _line_errors(result)
     if errors:

@@ -290,7 +290,7 @@ def _extract_invoice_list(result: dict) -> list:
     return []
 
 
-# ─── Shared payload builders (also used by credit_note.py / sales_order.py) ──
+# ─── Shared payload builders ─────────────────────────────────────────────────
 
 def _validate_settings(settings) -> None:
     """
@@ -884,14 +884,7 @@ def _save_result(doc, result: dict):
 
     validation_url = ""
     if antifake and fdn_number:
-        settings   = get_efris_settings(doc.company)
-        api_url    = getattr(settings, "api_url", "") or ""
-        sandbox    = "efristest" in api_url.lower()
-        efris_host = "https://efristest.ura.go.ug" if sandbox else "https://efris.ura.go.ug"
-        validation_url = (
-            f"{efris_host}/site_new/#/invoiceValidation"
-            f"?invoiceNo={fdn_number}&antiFakeCode={antifake}"
-        )
+        validation_url = ura_validation_url(doc.company, fdn_number, antifake)
     elif qr_raw:
         validation_url = qr_raw
     elif antifake:
@@ -918,6 +911,13 @@ def _save_result(doc, result: dict):
     efris_status = "Submitted" if invoice_id else "Pending"
     doc.db_set("efris_status",        efris_status,   update_modified=False)
     doc.db_set("efris_submitted_at",  datetime.now(), update_modified=False)
+
+
+def ura_validation_url(company: str, fdn: str, antifake: str) -> str:
+    """URA portal page that verifies a fiscal document (also what the QR code encodes)."""
+    api_url = getattr(get_efris_settings(company), "api_url", "") or ""
+    host = "https://efristest.ura.go.ug" if "efristest" in api_url.lower() else "https://efris.ura.go.ug"
+    return f"{host}/site_new/#/invoiceValidation?invoiceNo={fdn}&antiFakeCode={antifake}"
 
 
 @frappe.whitelist()
