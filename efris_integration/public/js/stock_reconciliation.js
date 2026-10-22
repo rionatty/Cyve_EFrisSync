@@ -9,7 +9,7 @@ frappe.ui.form.on("Stock Reconciliation", {
         efris_add_status_badge(frm);
 
         if (frm.doc.docstatus === 1 && !frm.doc.efris_invoice_id) {
-            frm.add_custom_button(__("Submit Opening Stock to EFRIS (T114)"), () => {
+            frm.add_custom_button(__("Submit Opening Stock to EFRIS"), () => {
                 efris_confirm_and_call(frm,
                     __("Submit this reconciliation as Opening Stock to EFRIS?"),
                     () => {

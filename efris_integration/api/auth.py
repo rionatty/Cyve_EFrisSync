@@ -47,7 +47,7 @@ def get_server_time(company: str) -> str:
     try:
         result = client.call("T101", encrypt=False)
     except Exception as exc:
-        frappe.throw(f"T101 failed: {exc}")
+        frappe.throw(f"Could not connect to EFRIS: {exc}")
 
     # T101.cs: JsonPropertyName("currentTime")
     server_time = result.get("currentTime", "")
@@ -94,7 +94,7 @@ def client_init(company: str) -> dict:
             "EFRIS T102 Unexpected Response",
         )
         frappe.throw(
-            f"T102 returned incomplete key data.<br>"
+            f"EFRIS returned incomplete key data.<br>"
             f"serverPubKey: {'✅' if server_pub_key else '❌'}<br>"
             f"clientPriKey: {'✅' if encrypted_priv_key else '❌'}<br>"
             f"keyTable    : {'✅' if key_table else '❌ (missing)'}<br>"
@@ -129,7 +129,7 @@ def client_init(company: str) -> dict:
     if private_key_pem:
         km.save_private_key(private_key_pem)
         frappe.msgprint(
-            "✅ T102: Server public key and client private key saved to EFRIS Settings.",
+            "✅ EFRIS keys saved to EFRIS Settings.",
             indicator="green",
         )
         return {"status": "OK", "server_pub_key_preview": server_pub_key[:40] + "…"}
@@ -154,19 +154,19 @@ def client_init(company: str) -> dict:
             "EFRIS T102 Decrypt Warning",
         )
         frappe.msgprint(
-            "⚠️ T102: Server public key updated.<br><br>"
+            "⚠️ Server public key updated.<br><br>"
             "The EFRIS server did not return a decryptable private key "
             "(<code>keyTable</code> missing).<br>"
             "Your existing private key in EFRIS Settings is still valid — no change made.<br><br>"
             "If you need to re-download the private key, contact URA support for "
             "the correct decryption method for your EFRIS environment.",
             indicator="orange",
-            title="T102 Partial Success",
+            title="EFRIS Keys Partly Updated",
         )
         return {"status": "partial", "server_pub_key_updated": True, "private_key_kept": True}
 
     # No existing key and decryption failed — hard error
-    frappe.throw(decrypt_error or "T102 clientPriKey decryption failed.", title="T102 Private Key Decrypt Failed")
+    frappe.throw(decrypt_error or "Could not decrypt the private key returned by EFRIS.", title="EFRIS Key Error")
 
 
 # ─── T103: Sign In / Get Device Info ──────────────────────────────────────
@@ -197,7 +197,6 @@ def sign_in(company: str) -> dict:
         if tp_id:
             settings.db_set("taxpayer_id", tp_id, update_modified=False)
 
-    frappe.msgprint("✅ T103: Device / taxpayer info received from EFRIS.", indicator="green")
     return {"status": "OK", "taxpayer": taxpayer}
 
 
@@ -287,10 +286,6 @@ def get_symmetric_key(company: str, force: bool = False) -> dict:
                 frappe.logger("efris").info(
                     f"T104 skipped [{company}] — existing session key still valid: "
                     f"{existing_key.hex()}"
-                )
-                frappe.msgprint(
-                    f"✅ T104: Existing session key ({len(existing_key)*8}-bit) is still valid.",
-                    indicator="green",
                 )
                 return {"status": "AES Key Valid (existing)", "key_bits": len(existing_key) * 8}
 
@@ -392,10 +387,6 @@ def get_symmetric_key(company: str, force: bool = False) -> dict:
                 f"T104 ✅ [{company}] AES key confirmed by encrypted T126 probe [{label}]: "
                 f"{len(key_bytes)*8}-bit  {key_bytes.hex()}"
             )
-            frappe.msgprint(
-                f"✅ T104: Session AES key ({len(key_bytes)*8}-bit) saved to EFRIS Settings.",
-                indicator="green",
-            )
             return {"status": "AES Key Set", "key_bits": len(key_bytes) * 8, "method": label}
 
         except EFRISAPIError as exc:
@@ -426,10 +417,6 @@ def get_symmetric_key(company: str, force: bool = False) -> dict:
                 f"(EFRIS processed our encrypted payload, returned [{exc.code}]): "
                 f"{key_bytes.hex()}"
             )
-            frappe.msgprint(
-                f"✅ T104: Session AES key ({len(key_bytes)*8}-bit) saved to EFRIS Settings.",
-                indicator="green",
-            )
             return {"status": "AES Key Set", "key_bits": len(key_bytes) * 8, "method": label}
 
         except Exception as exc:
@@ -455,7 +442,7 @@ def get_symmetric_key(company: str, force: bool = False) -> dict:
             "EFRIS T104 Probe Network Error",
         )
         frappe.msgprint(
-            f"⚠️ T104: AES key saved (unverified — T126 network errors during probe).",
+            "⚠️ EFRIS session key saved, but it could not be verified because EFRIS was unreachable.",
             indicator="orange",
         )
         return {"status": "AES Key Set (unverified)", "key_bits": len(fallback_key) * 8}
@@ -478,16 +465,16 @@ def get_symmetric_key(company: str, force: bool = False) -> dict:
     # via Frappe's API error response.
     if not private_key_pem:
         raise frappe.ValidationError(
-            "T104 failed: Private Key is not set in EFRIS Settings. "
+            "Could not get an EFRIS session key: the Private Key is not set in EFRIS Settings. "
             "Paste the content of PrivateKey.txt into the Private Key field and save."
         )
     else:
         raise frappe.ValidationError(
-            "T104 failed: the Private Key in EFRIS Settings does not match "
+            "Could not get an EFRIS session key: the Private Key in EFRIS Settings does not match "
             "the RSA key pair registered with EFRIS. "
             "Paste the correct PrivateKey.txt content into the Private Key field, "
             "or paste SessionAESKey.txt into the Session AES Key field. "
-            "See Error Log → EFRIS T104 All Candidates Failed for details."
+            "See the Error Log for details."
         )
 
 
@@ -859,14 +846,14 @@ def set_session_key(company: str, key_b64: str) -> dict:
     if verified:
         frappe.msgprint(
             f"✅ Session AES key ({len(key_bytes)*8}-bit) saved to EFRIS Settings and <b>verified</b> "
-            f"— T126 decrypts successfully.",
+            f"by EFRIS.",
             indicator="green",
             title="Session Key Saved",
         )
     else:
         frappe.msgprint(
             f"⚠️ Session AES key ({len(key_bytes)*8}-bit) saved to EFRIS Settings, "
-            "but <b>T126 verification failed</b> — "
+            "but <b>EFRIS could not verify it</b> — "
             "the key may be wrong or the server session has changed.",
             indicator="orange",
             title="Session Key Saved (unverified)",
@@ -982,7 +969,7 @@ def test_session_key(company: str) -> dict:
             doc_type="__key_test__", doc_name="test",
         )
         frappe.msgprint(
-            f"✅ Session key ({len(key_bytes)*8}-bit) is VALID — T126 encrypted probe accepted.<br>"
+            f"✅ Session key ({len(key_bytes)*8}-bit) is VALID — accepted by EFRIS.<br>"
             f"Key hex: <code>{key_bytes.hex()}</code><br>"
             f"Key b64: <code>{_b64.b64encode(key_bytes).decode()}</code>",
             indicator="green",
@@ -997,7 +984,7 @@ def test_session_key(company: str) -> dict:
                 f"EFRIS returned [{exc.code}]: {exc.message}<br><br>"
                 f"Key hex: <code>{key_bytes.hex()}</code><br><br>"
                 f"<b>Options to recover</b>:<br>"
-                f"1. Click <b>Full Initialise</b> (T101 → T103 → T104) to get a fresh session key.<br>"
+                f"1. Click <b>Full Initialise</b> to get a fresh session key.<br>"
                 f"2. Click <b>Generate Key Pair</b> if the private key no longer matches EFRIS.<br>"
                 f"3. Paste a known-good base64 key directly into the Session AES Key field.",
                 indicator="red",
@@ -1037,13 +1024,13 @@ def full_initialise(company: str) -> dict:
     """
     results = {}
 
-    frappe.publish_progress(10, title="EFRIS Init", description="T101 — Testing connection…")
+    frappe.publish_progress(10, title="EFRIS Init", description="Testing connection…")
     results["server_time"] = get_server_time(company)
 
-    frappe.publish_progress(40, title="EFRIS Init", description="T103 — Sign in…")
+    frappe.publish_progress(40, title="EFRIS Init", description="Signing in…")
     results["t103"] = sign_in(company)
 
-    frappe.publish_progress(75, title="EFRIS Init", description="T104 — Getting fresh session key…")
+    frappe.publish_progress(75, title="EFRIS Init", description="Getting a fresh session key…")
     # force=True: T103 just reset the server session key, skip the step-0 probe
     results["t104"] = get_symmetric_key(company, force=True)
 

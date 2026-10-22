@@ -33,7 +33,7 @@ class KeyManager:
         if not key:
             raise RuntimeError(
                 "EFRIS Server Public Key is not configured in EFRIS Settings. "
-                "Click 'T102 Get Keys' to auto-fill, or paste PublicKey.txt content manually."
+                "Run Full Initialise to fill it, or paste PublicKey.txt content manually."
             )
         return key
 
@@ -60,7 +60,7 @@ class KeyManager:
         if not key:
             raise RuntimeError(
                 "Private Key is not configured in EFRIS Settings. "
-                "Click 'T102 Get Keys' to auto-fill, or paste PrivateKey.txt content manually. "
+                "Run Full Initialise to fill it, or paste PrivateKey.txt content manually. "
                 "Accepted formats: base64 PKCS#8 (SAP B1 export) or PEM."
             )
         return key
@@ -85,7 +85,7 @@ class KeyManager:
         if not key_b64:
             raise RuntimeError(
                 "Session AES Key is not configured in EFRIS Settings. "
-                "Click 'Full Initialise' or 'T104 Get Session Key' to auto-fill it, "
+                "Click 'Full Initialise' to fill it, "
                 "or paste SessionAESKey.txt content manually."
             )
         key = _parse_aes_key_b64(key_b64)

@@ -33,23 +33,20 @@
       "fieldtype": "Data",
       "label": "Code",
       "reqd": 1,
-      "in_list_view": 1,
-      "description": "ERPNext UOM abbreviation or short code (e.g. Pcs, Kgs, Ltrs)"
+      "in_list_view": 1
     },
     {
       "fieldname": "uom_name",
       "fieldtype": "Data",
       "label": "Name",
       "reqd": 1,
-      "in_list_view": 1,
-      "description": "Full UOM display name (e.g. Pieces, Kilograms, Litres)"
+      "in_list_view": 1
     },
     {
       "fieldname": "ura_uom",
       "fieldtype": "Data",
       "label": "URA UOM",
-      "in_list_view": 1,
-      "description": "URA unit of measure code sent to EFRIS (e.g. PP-Piece, KGM-Kilogram, BE-Bundle)"
+      "in_list_view": 1
     }
   ],
 

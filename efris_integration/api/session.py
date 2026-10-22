@@ -147,7 +147,7 @@ def refresh_session(client: EFRISClient, company: str) -> None:
         # T104 failed — private key likely doesn't match EFRIS registration.
         # Raise a clear error so the caller shows the right message.
         raise RuntimeError(
-            f"T104 session refresh failed: {t104_exc}<br><br>"
+            f"EFRIS session refresh failed: {t104_exc}<br><br>"
             "Go to <b>EFRIS Settings → Full Initialise</b> to re-register, "
             "or paste the correct <b>Session AES Key</b> directly."
         ) from t104_exc

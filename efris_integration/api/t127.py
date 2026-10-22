@@ -34,7 +34,7 @@ def get_industry_config(company: str, force_refresh: bool = False) -> dict:
     Pass force_refresh=True to bypass cache.
     """
     if not company:
-        frappe.throw("Company is required for T127 industry config lookup.")
+        frappe.throw("Company is required to look up EFRIS excise rates.")
 
     cache_key = (frappe.local.site, company)
     if not force_refresh and cache_key in _T127_CACHE:

@@ -87,8 +87,7 @@
       "fieldname": "api_url",
       "fieldtype": "Data",
       "label": "URL",
-      "reqd": 1,
-      "description": "Test: https://efristest.ura.go.ug/efrisws/ws/taapp/getInformation  |  Production: https://efrisws.ura.go.ug/ws/taapp/getInformation"
+      "reqd": 1
     },
     { "fieldname": "col_conn", "fieldtype": "Column Break" },
     {
@@ -123,28 +122,24 @@
       "fieldname": "tin",
       "fieldtype": "Data",
       "label": "TIN",
-      "reqd": 1,
-      "description": "Uganda Revenue Authority Tax Identification Number"
+      "reqd": 1
     },
     {
       "fieldname": "taxpayer_id",
       "fieldtype": "Data",
       "label": "Taxpayer ID",
-      "reqd": 1,
-      "description": "EFRIS Taxpayer ID (usually same as TIN)"
+      "reqd": 1
     },
     {
       "fieldname": "legal_name",
       "fieldtype": "Data",
-      "label": "Legal Name",
-      "description": "Registered legal name of the company"
+      "label": "Legal Name"
     },
     { "fieldname": "col_company1", "fieldtype": "Column Break" },
     {
       "fieldname": "company_name",
       "fieldtype": "Data",
-      "label": "Business Name",
-      "description": "Trading / business name"
+      "label": "Business Name"
     },
     {
       "fieldname": "address",
@@ -167,8 +162,7 @@
     {
       "fieldname": "branch_id",
       "fieldtype": "Data",
-      "label": "Branch ID",
-      "description": "EFRIS Branch ID assigned by URA"
+      "label": "Branch ID"
     },
     {
       "fieldname": "branch_name",
@@ -187,23 +181,20 @@
       "fieldtype": "Select",
       "label": "Industry Code",
       "options": "101\n102\n104\n105\n106\n107\n108\n109\n110\n111\n112",
-      "default": "101",
-      "description": "101:General | 102:Export | 104:Imported Service | 105:Telecom | 106:Stamp Duty | 107:Hotel | 108:Other | 109:Airline | 110:EDC | 111:Auction | 112:Export Service"
+      "default": "101"
     },
 
     {
       "fieldname": "section_keys",
       "fieldtype": "Section Break",
-      "label": "Cryptographic Keys",
-      "description": "Paste key content directly — no file paths needed. Private Key and Session Key are filled automatically by Full Initialise."
+      "label": "Cryptographic Keys"
     },
     {
       "fieldname": "private_key",
       "fieldtype": "Code",
       "label": "Private Key",
       "options": "Text",
-      "rows": 8,
-      "description": "Paste PrivateKey.txt content here (base64 PKCS#8 or PEM). Auto-filled by T102. Keep this confidential."
+      "rows": 8
     },
     { "fieldname": "col_keys", "fieldtype": "Column Break" },
     {
@@ -211,22 +202,20 @@
       "fieldtype": "Code",
       "label": "EFRIS Server Public Key",
       "options": "Text",
-      "rows": 5,
-      "description": "Paste PublicKey.txt content here (base64 or PEM). Auto-filled by T102."
+      "rows": 5
     },
     {
       "fieldname": "session_aes_key",
       "fieldtype": "Data",
-      "label": "Session AES Key (base64)",
-      "description": "Paste SessionAESKey.txt content here (base64). Auto-filled by T104 / Full Initialise."
+      "label": "Session AES Key (base64)"
     },
 
     { "fieldname": "tab_settings", "fieldtype": "Tab Break", "label": "Settings" },
 
-    { "fieldname": "use_uom_name",           "fieldtype": "Check", "label": "Use UOM Name",                            "description": "Send UOM name to EFRIS instead of code" },
-    { "fieldname": "excise_duty_doc_source", "fieldtype": "Check", "label": "Excise Duty Calculation Document Source", "description": "Use source document for excise duty calculation" },
+    { "fieldname": "use_uom_name",           "fieldtype": "Check", "label": "Use UOM Name" },
+    { "fieldname": "excise_duty_doc_source", "fieldtype": "Check", "label": "Excise Duty Calculation Document Source" },
     { "fieldname": "col_sett0", "fieldtype": "Column Break" },
-    { "fieldname": "use_t127",             "fieldtype": "Check", "label": "USE T127  On AR Invoice",  "description": "Fetch live excise rates from URA before invoice submission" },
+    { "fieldname": "use_t127",             "fieldtype": "Check", "label": "Use Live Excise Rates On AR Invoice" },
     { "fieldname": "gross_on_sales_order", "fieldtype": "Check", "label": "Gross On Sales Order" },
     { "fieldname": "gross_on_delivery",    "fieldtype": "Check", "label": "Gross On Delivery" },
     { "fieldname": "gross_on_ar_invoice",  "fieldtype": "Check", "label": "Gross On AR Invoice",  "default": "1" },
@@ -245,8 +234,7 @@
     {
       "fieldname": "has_local_excise_duty",
       "fieldtype": "Check",
-      "label": "Registered for Local Excise Duty",
-      "description": "Enable ONLY if URA has registered this taxpayer for Local Excise Duty. When unchecked, haveExciseTax is forced to '102' on all item uploads (prevents EFRIS error [681])."
+      "label": "Registered for Local Excise Duty"
     }
 
   ],

@@ -79,7 +79,7 @@ def get_ura_branch(warehouse_name: str, company: str) -> dict:
             "message": f"[{exc.code}] {exc.message}",
         }
     except Exception as exc:
-        frappe.throw(str(exc), title="EFRIS T138 Error")
+        frappe.throw(str(exc), title="EFRIS Error")
 
     # ── Normalise response to a list ─────────────────────────────────────────
     if isinstance(result, dict):
@@ -114,7 +114,7 @@ def get_ura_branch(warehouse_name: str, company: str) -> dict:
     if not all_branches:
         return {
             "status":      "error",
-            "message":     "T138 returned no branch records.",
+            "message":     "EFRIS returned no branches for this company.",
             "all_branches": [],
         }
 

@@ -52,7 +52,7 @@ function _add_primary_buttons(frm) {
             method: "efris_integration.efris_integration.doctype.efris_settings.efris_settings.test_connection",
             args: { company: frm.doc.company },
             freeze: true,
-            freeze_message: __("Testing EFRIS connection (T101)…"),
+            freeze_message: __("Testing EFRIS connection…"),
             callback(r) {
                 if (r.message) {
                     const res = r.message;
@@ -111,7 +111,7 @@ function _add_primary_buttons(frm) {
                         to_date:   values.to_date,
                     },
                     freeze: true,
-                    freeze_message: __("Fetching URA exchange rates (T126)…"),
+                    freeze_message: __("Fetching URA exchange rates…"),
                     callback(r) {
                         if (r.message) {
                             const m = r.message;

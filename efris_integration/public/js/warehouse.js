@@ -45,7 +45,7 @@ function efris_get_branch(frm) {
         return;
     }
 
-    frappe.dom.freeze(__("Fetching branches from URA (T138)…"));
+    frappe.dom.freeze(__("Fetching branches from URA…"));
 
     frappe.call({
         method: "efris_integration.api.warehouse.get_ura_branch",
@@ -60,7 +60,7 @@ function efris_get_branch(frm) {
             if (d.status === "error") {
                 frappe.msgprint({
                     title:     __("URA Error"),
-                    message:   d.message || __("T138 call failed."),
+                    message:   d.message || __("Could not fetch branches from URA."),
                     indicator: "red",
                 });
                 return;

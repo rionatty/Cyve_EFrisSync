@@ -340,7 +340,7 @@ def _fetch_rates_for_date(
             )
             raise EFRISAPIError(
                 "SESSION_REFRESH_FAILED",
-                f"T104 session refresh failed — paste Session AES Key in EFRIS Settings. "
+                f"EFRIS session refresh failed — run Full Initialise in EFRIS Settings. "
                 f"Detail: {short}",
             ) from refresh_exc
 

@@ -151,7 +151,7 @@ def fetch_invoice_from_ura(invoice_name: str) -> dict:
     if inv_id:
         return {"status": "ok", "invoice_id": inv_id}
     return {"status": "not_found",
-            "message": "Invoice not yet visible in URA T106. Try again in a few moments."}
+            "message": "Invoice not yet visible on URA EFRIS. Try again in a few moments."}
 
 
 # ─── T106: Query Invoices ─────────────────────────────────────────────────

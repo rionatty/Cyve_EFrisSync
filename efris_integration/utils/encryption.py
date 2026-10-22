@@ -71,7 +71,7 @@ def _import_rsa_key(key_data: str):
     raise ValueError(
         "RSA key format is not supported.<br><br>"
         "The Private Key in EFRIS Settings is in an unrecognised format.<br>"
-        "Run <b>Full Initialise (T101 → T104)</b> to regenerate it, or paste a valid "
+        "Run <b>Full Initialise</b> to regenerate it, or paste a valid "
         "PEM or base64-encoded PKCS#8 private key into the Private Key field.<br>"
         f"Key preview: <code>{text[:80]}</code>"
     )
@@ -103,9 +103,9 @@ def rsa_decrypt(encrypted_b64: str, private_key_pem: str) -> bytes:
 
     raise ValueError(
         "RSA decryption failed (tried PKCS1v1.5 and OAEP).<br>"
-        "The T104 session key cannot be decrypted — the Private Key in EFRIS Settings "
+        "The EFRIS session key cannot be decrypted — the Private Key in EFRIS Settings "
         "may not match the current EFRIS server session.<br>"
-        "Run <b>Full Initialise (T101→T104)</b> from EFRIS Settings to regenerate keys."
+        "Run <b>Full Initialise</b> from EFRIS Settings to regenerate keys."
     )
 
 
@@ -402,7 +402,7 @@ def try_decrypt_private_key(
         pass
 
     raise ValueError(
-        f"T102 clientPriKey: decryption failed (tried {len(tried)} strategies).<br><br>"
+        f"Could not decrypt the private key returned by EFRIS (tried {len(tried)} methods).<br><br>"
         f"<b>keyTable</b>: {'✅ present' if key_table else '❌ missing'}<br>"
         f"<b>OTP sent</b>: <code>{otp or '(none)'}</code><br>"
         f"<b>taxpayer_id</b>: <code>{taxpayer_id}</code><br><br>"

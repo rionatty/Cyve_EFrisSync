@@ -28,7 +28,6 @@ FIELDS_TO_UPDATE = {
             "allow_on_submit": 1,
             "hidden":         0,
             "bold":           1,
-            "description":    "URA-assigned T131 document number returned after successful EFRIS upload.",
         },
         {
             "fieldname":      "efris_status",

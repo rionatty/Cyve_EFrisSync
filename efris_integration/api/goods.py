@@ -76,8 +76,8 @@ def _register_goods(item, company: str) -> dict:
             _log_item("Item", item.name, "T130", payload, {}, "Failed",
                       f"[{exc.code}] {exc.message}")
             frappe.throw(
-                f"EFRIS T130 failed [<b>{exc.code}</b>]: {exc.message}",
-                title="EFRIS T130 Error",
+                f"EFRIS item registration failed [<b>{exc.code}</b>]: {exc.message}",
+                title="EFRIS Error",
             )
 
         # Session stale — refresh via T104 (no T103, safe) and retry once.
@@ -136,7 +136,7 @@ def _register_goods(item, company: str) -> dict:
     if goods_id:
         msg += f"<br>URA Reference No.: <b>{goods_id}</b>"
 
-    frappe.msgprint(msg, title="EFRIS T130 — Goods Registered", indicator="green")
+    frappe.msgprint(msg, title="Item Registered on EFRIS", indicator="green")
     return {"status": "ok", "goods_id": goods_id, "message": msg}
 
 
@@ -183,8 +183,8 @@ def _modify_goods(item, company: str) -> dict:
             _log_item("Item", item.name, "T130", payload, {}, "Failed",
                       f"[{exc.code}] {exc.message}")
             frappe.throw(
-                f"EFRIS T130 (modify) failed [<b>{exc.code}</b>]: {exc.message}",
-                title="EFRIS T130 Error",
+                f"EFRIS item update failed [<b>{exc.code}</b>]: {exc.message}",
+                title="EFRIS Error",
             )
 
         frappe.logger("efris").info(
@@ -237,7 +237,7 @@ def _modify_goods(item, company: str) -> dict:
     if goods_id_new:
         msg += f"<br>URA Reference No.: <b>{goods_id_new}</b>"
 
-    frappe.msgprint(msg, title="EFRIS T130 — Goods Updated", indicator="green")
+    frappe.msgprint(msg, title="Item Updated on EFRIS", indicator="green")
     return {"status": "ok", "goods_id": goods_id_new, "message": msg}
 
 

@@ -15,7 +15,7 @@ frappe.ui.form.on("Purchase Receipt", {
         efris_add_status_badge(frm);
 
         if (frm.doc.docstatus === 1 && !frm.doc.efris_invoice_id) {
-            frm.add_custom_button(__("Submit to EFRIS (T114)"), () => {
+            frm.add_custom_button(__("Submit to EFRIS"), () => {
                 efris_stock_in_dialog(frm,
                     "efris_integration.api.stock.submit_purchase_receipt",
                     { receipt_name: frm.doc.name }

@@ -16,22 +16,14 @@ FIELDS_TO_ADD = {
         {
             "fieldname": "efris_excise_category_id",
             "fieldtype": "Data",
-            "label":     "Excise Category Id (T109)",
+            "label":     "Excise Category Id",
             "insert_after": "efris_excise_duty_category",
-            "description": (
-                "URA excise category ID used in T109 invoice goodsDetails.categoryId "
-                "when exciseFlag='1'. Leave blank to fall back to Commodity Category Id."
-            ),
         },
         {
             "fieldname": "efris_excise_category_name",
             "fieldtype": "Data",
-            "label":     "Excise Category Name (T109)",
+            "label":     "Excise Category Name",
             "insert_after": "efris_excise_category_id",
-            "description": (
-                "URA excise category name for T109 invoice goodsDetails.categoryName "
-                "when exciseFlag='1'. Leave blank to fall back to item group."
-            ),
         },
     ],
 }

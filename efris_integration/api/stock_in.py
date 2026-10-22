@@ -108,7 +108,7 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
     if t131_remark and efris_status == "Submitted":
         frappe.throw(
             f"Stock Entry <b>{stock_entry_name}</b> has already been submitted "
-            f"to URA EFRIS (T131).<br>"
+            f"to URA EFRIS.<br>"
             + (f"URA Reference No: <b>{ura_ref}</b><br>" if ura_ref else "")
             + "To re-submit, clear the <b>URA Reference No</b>, "
             "<b>EFRIS Status</b>, and <b>Remark</b> on the URA tab.",
@@ -159,8 +159,8 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
             _log("Stock Entry", stock_entry_name, "T131", payload, {}, "Failed",
                  f"[{exc.code}] {exc.message}")
             frappe.throw(
-                f"EFRIS T131 failed [<b>{exc.code}</b>]: {exc.message}",
-                title="EFRIS T131 Error",
+                f"EFRIS stock-in failed [<b>{exc.code}</b>]: {exc.message}",
+                title="EFRIS Error",
             )
 
         # Session stale — refresh via T104 and retry once
@@ -210,7 +210,7 @@ def upload_stock_in(stock_entry_name: str, company: str) -> dict:
     if ura_remark:
         msg += f"<br>URA Response: <b>{ura_remark}</b>"
 
-    frappe.msgprint(msg, title="EFRIS T131 — Stock In Submitted", indicator="green")
+    frappe.msgprint(msg, title="Stock In Submitted to EFRIS", indicator="green")
     return {"status": "ok", "message": msg}
 
 

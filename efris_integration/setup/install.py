@@ -39,12 +39,10 @@ CUSTOM_FIELDS = {
 
         {"fieldname": "efris_qr_code",      "fieldtype": "Small Text",   "label": "QR Code",
          "insert_after": "efris_col_left",  "read_only": 1,
-         "description": "URA EFRIS invoice validation URL",
          "module": "EFRIS Integration"},
 
         {"fieldname": "efris_qr_path",      "fieldtype": "Small Text",   "label": "QR Validation URL",
          "insert_after": "efris_qr_code",   "read_only": 1,
-         "description": "URA invoice verification URL — click to open in browser",
          "module": "EFRIS Integration"},
 
         {"fieldname": "efris_antifake_code","fieldtype": "Data",         "label": "Verification Code",
@@ -114,7 +112,6 @@ CUSTOM_FIELDS = {
         {"fieldname": "efris_section", "fieldtype": "Tab Break", "label": "EFRIS"},
         {"fieldname": "efris_stock_in_option", "fieldtype": "Select", "label": "EFRIS Stock-In Type",
          "options": "\n101\n102\n103\n104",
-         "description": "101=Import, 102=Local Purchase, 103=Manufacture, 104=Opening Stock",
          "default": "102"},
         {"fieldname": "efris_supplier_tin", "fieldtype": "Data", "label": "Supplier TIN (EFRIS)"},
         {"fieldname": "efris_col_break", "fieldtype": "Column Break"},
@@ -151,14 +148,12 @@ CUSTOM_FIELDS = {
         # ── Right column ──────────────────────────────────────────────────────
         {"fieldname": "efris_reference_no",   "fieldtype": "Data",          "label": "Reference No",
          "insert_after": "efris_col_break",
-         "allow_on_submit": 1,
-         "description": "EFRIS invoice number already registered in URA system (optional). Leave blank if no linked invoice."},
+         "allow_on_submit": 1},
         {"fieldname": "efris_ura_remark",     "fieldtype": "Small Text",    "label": "URA Remark",
          "insert_after": "efris_reference_no",
          "read_only": 1,
          "no_copy":  1,   # T131-specific — must not be copied from parent documents
          "allow_on_submit": 1,
-         "description": "Response message from URA EFRIS after T131 submission.",
          "module": "EFRIS Integration"},
 
         # ── URA response fields (visible — written on T131 success) ─────────
@@ -173,7 +168,6 @@ CUSTOM_FIELDS = {
             "no_copy":        1,   # prevent Sales Invoice efris_invoice_id being copied here
             "allow_on_submit": 1,
             "bold":           1,
-            "description":    "URA-assigned T131 document number returned after successful EFRIS upload.",
         },
         {
             "fieldname":      "efris_status",
@@ -240,7 +234,6 @@ CUSTOM_FIELDS = {
             "fieldtype":   "Select",
             "label":       "Upload Type On EFRIS",
             "options":     "\nAdd\nUpdate",
-            "description": "Add = register new goods on EFRIS (T130).  Update = modify existing goods (T131).",
         },
         {
             "fieldname": "efris_goods_type",
@@ -254,7 +247,6 @@ CUSTOM_FIELDS = {
             "fieldtype":   "Select",
             "label":       "Tax Rate",
             "options":     "\nA\nB\nC\nD\nE",
-            "description": "A=Standard(18%), B=Zero-Rated, C=Exempt, D=Special, E=Out of Scope",
         },
         {
             "fieldname": "efris_unit_price",
@@ -271,7 +263,6 @@ CUSTOM_FIELDS = {
             "fieldname":   "efris_goods_category_id",
             "fieldtype":   "Data",
             "label":       "Commodity Category Id",
-            "description": "e.g. 238 for general goods",
         },
         {
             "fieldname": "efris_stock_prewarning",
@@ -307,19 +298,16 @@ CUSTOM_FIELDS = {
             "fieldname": "efris_excise_duty_category",
             "fieldtype": "Data",
             "label":     "Excise Duty Category",
-            "description": "URA excise duty category code sent in T130 goods registration (e.g. LED010300)",
         },
         {
             "fieldname": "efris_excise_category_id",
             "fieldtype": "Data",
-            "label":     "Excise Category Id (T109)",
-            "description": "URA excise category ID used in T109 invoice goodsDetails.categoryId when exciseFlag='1'. Leave blank to fall back to Commodity Category Id.",
+            "label":     "Excise Category Id",
         },
         {
             "fieldname": "efris_excise_category_name",
             "fieldtype": "Data",
-            "label":     "Excise Category Name (T109)",
-            "description": "URA excise category name for T109 invoice goodsDetails.categoryName when exciseFlag='1'. Leave blank to fall back to item group.",
+            "label":     "Excise Category Name",
         },
         {
             "fieldname": "efris_piece_uom",
@@ -499,6 +487,11 @@ def _last_standard_field(doctype: str) -> str:
 
 def _build_custom_fields() -> dict:
     fields = copy.deepcopy(CUSTOM_FIELDS)
+    # No help text under EFRIS fields. Set it explicitly so migrate also
+    # clears descriptions saved by earlier versions on existing sites.
+    for field_list in fields.values():
+        for df in field_list:
+            df["description"] = ""
     for doctype, anchor in EFRIS_TAB_ANCHORS.items():
         prev = anchor or _last_standard_field(doctype)
         for df in fields[doctype]:
