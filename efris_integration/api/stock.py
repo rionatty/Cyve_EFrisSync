@@ -14,7 +14,11 @@ Stock Entry  Material Receipt            T131 in   (Stock In Type + Supplier fro
                                            (if "Receipt from Production" is on)
                                          T131 out  consumed lines, adjust "Raw Materials"
                                            (if "Issue from Production" is on)
-             Material Transfer           T139 per source → destination branch pair
+             Material Transfer           by the warehouses' "URA Warehouse" flag:
+                                           non-URA → URA  T131 in (type 103)
+                                           URA → non-URA  T131 out (Raw Materials)
+                                           Multi-Branch on: URA → URA across branches
+                                           T139 per branch pair (nothing else sent)
              Material Transfer
                for Manufacture           nothing (internal move; consumption is
                                            reported on the Manufacture entry)
@@ -24,6 +28,8 @@ Stock Reconciliation  Opening Stock      T131 in   type 104
                       count difference   T131 in   (+) type 102 / out (-) adjust "Others"
 ──────────────────────────────────────────────────────────────────────────────
 
+Only lines in a URA warehouse (Warehouse → URA Warehouse = Yes) are sent; a
+company that has marked no warehouse treats every warehouse as a URA warehouse.
 Quantities and prices are sent in the item's stock UOM.
 Lines are grouped by URA branch (multi-branch) and sent one call per group,
 with rollBackIfError=1 so each call is all-or-nothing. Each successful part is
@@ -182,12 +188,12 @@ def _stock_entry_parts(doc, settings, manual: bool) -> list:
     if t == "Material Transfer":
         if not manual and not settings.stock_transfer:
             return []   # auto-send of transfers is switched off
-        parts = _t139_parts(doc, settings)
+        parts = _transfer_parts(doc, settings)
         if not parts and manual:
             frappe.throw(
-                "Nothing to send: URA only needs transfers between two different URA "
-                "branches (set <b>URA Branch Id</b> on both warehouses and turn on "
-                "<b>Multi-Branch</b> in EFRIS Settings).",
+                "Nothing to send: URA only needs transfers that move stock into or out of a "
+                "URA warehouse (Warehouse → URA tab → <b>URA Warehouse</b>), or, with "
+                "<b>Multi-Branch</b> on, between URA warehouses of two different URA branches.",
                 title="EFRIS",
             )
         return parts
@@ -257,6 +263,10 @@ def _stock_reconciliation_parts(doc, settings) -> list:
 
 def _t131_parts(doc, settings, key, operation, lines, *, stock_in_type="", supplier_name="",
                 supplier_tin="", adjust_type="", invoice_no="", remarks="") -> list:
+    # Only lines in a URA warehouse are sent (SAP: OWHS.U_CVT_URAWHS = 'Y')
+    ura = _ura_warehouses(doc.company)
+    if ura is not None:
+        lines = [l for l in lines if l["warehouse"] in ura]
     parts = []
     groups = _group_by_branch(lines, settings)
     for (branch_id, branch_name), group in groups.items():
@@ -318,6 +328,39 @@ def _t131_payload(doc, operation, lines, branch_id, *, stock_in_type, supplier_n
 
 # ─── T139 (transfer between branches) ────────────────────────────────────────
 
+def _transfer_parts(doc, settings) -> list:
+    """
+    Material Transfer, by the warehouses' "URA Warehouse" flag (SAP B1
+    InventoryTransfer.cs):
+      Multi-Branch on   URA → URA, different branches → T139 (other lines not sent)
+      Multi-Branch off  non-URA → URA → T131 stock in  (type 103)
+                        URA → non-URA → T131 stock out (Raw Materials)
+                        URA → URA / non-URA → non-URA → not sent
+    """
+    if settings.multi_branch:
+        return _t139_parts(doc, settings)
+
+    ura = _ura_warehouses(doc.company)
+    is_ura = (lambda wh: True) if ura is None else (lambda wh: wh in ura)
+    remarks = _remarks(_marker(doc), "Stock Count Adjustment")
+    ins, outs = [], []
+    for row in doc.items:
+        if not (row.item_code and row.s_warehouse and row.t_warehouse):
+            continue
+        src, dst = is_ura(row.s_warehouse), is_ura(row.t_warehouse)
+        if src == dst:
+            continue   # both inside or both outside URA's records
+        line = _line(row.item_code, row.stock_uom or row.uom, safe_float(row.transfer_qty or row.qty),
+                     safe_float(row.basic_rate or row.valuation_rate),
+                     row.t_warehouse if dst else row.s_warehouse)
+        (ins if dst else outs).append(line)
+
+    return (_t131_parts(doc, settings, "IN", STOCK_IN, ins,
+                        stock_in_type=STOCK_IN_MANUFACTURE, remarks=remarks)
+            + _t131_parts(doc, settings, "OUT", STOCK_OUT, outs,
+                          adjust_type=ADJUST_RAW_MATERIALS, remarks=remarks))
+
+
 def _t139_parts(doc, settings) -> list:
     if not settings.multi_branch:
         return []
@@ -325,11 +368,14 @@ def _t139_parts(doc, settings) -> list:
     transfer_type = TRANSFER_TYPES.get((doc.get("efris_transfer_type") or "").strip(), "103")
     reason = (doc.get("efris_adjust_reason") or "").strip()
     remarks = _remarks(marker, reason)
+    ura = _ura_warehouses(doc.company)
 
     pairs: dict = {}
     for row in doc.items:
         if not (row.item_code and row.s_warehouse and row.t_warehouse):
             continue
+        if ura is not None and not (row.s_warehouse in ura and row.t_warehouse in ura):
+            continue   # SAP: branch transfers only between two URA warehouses
         src = _branch(row.s_warehouse, settings)
         dst = _branch(row.t_warehouse, settings)
         if src[0] == dst[0]:
@@ -370,7 +416,11 @@ def _t139_parts(doc, settings) -> list:
 
 def _run(doc, parts: list, show_message: bool = True) -> dict:
     if not parts:
-        frappe.throw("No stock lines to send to EFRIS.", title="EFRIS")
+        frappe.throw(
+            "Nothing to send to EFRIS: none of the lines is in a URA warehouse "
+            "(Warehouse → URA tab → <b>URA Warehouse</b>).",
+            title="EFRIS",
+        )
 
     done = _parse_done(doc.get("efris_invoice_id") or "") if doc.get("efris_status") == "Failed" else {}
     sent = []
@@ -493,6 +543,17 @@ def _se_lines(doc, target: bool) -> list:
                            safe_float(row.basic_rate or row.valuation_rate), wh,
                            source_line=bool(row.s_warehouse), target_line=bool(row.t_warehouse)))
     return lines
+
+
+def _ura_warehouses(company: str):
+    """
+    Warehouses marked "URA Warehouse = Yes" for the company, or None when the
+    company has marked none — then every warehouse counts as a URA warehouse
+    (behaviour before the flag was used).
+    """
+    flagged = frappe.get_all("Warehouse", filters={"company": company, "efris_ura_warehouse": "Yes"},
+                             pluck="name")
+    return set(flagged) if flagged else None
 
 
 def _group_by_branch(lines: list, settings) -> dict:

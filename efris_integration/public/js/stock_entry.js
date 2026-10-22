@@ -52,7 +52,9 @@ function efris_upload_stock_entry(frm) {
         if (adjust === "Others" && !frm.doc.efris_adjust_reason) return missing(__("Reason"));
         summary = __("Stock out: {0}", [adjust]);
     } else if (t === "Material Transfer") {
-        summary = __("Transfer between URA branches: {0}", [frm.doc.efris_transfer_type || __("Others")]);
+        summary = __("Stock moved into a URA warehouse goes as stock in, out of one as stock out; "
+            + "with Multi-Branch, moves between URA branches go as a transfer ({0}).",
+            [frm.doc.efris_transfer_type || __("Others")]);
     } else {
         summary = __("Production: produced and consumed lines as set in EFRIS Settings");
     }
