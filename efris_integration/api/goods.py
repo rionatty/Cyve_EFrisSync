@@ -16,7 +16,7 @@ from efris_integration.api.session import (
     refresh_session,
     handle_session_error,
 )
-from efris_integration.utils.helpers import get_mapped_ura_uom, log_efris
+from efris_integration.utils.helpers import log_efris, map_uom
 
 
 # ─── Whitelisted entry point ───────────────────────────────────────────────────
@@ -257,7 +257,7 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
     """
     from efris_integration.utils.helpers import get_efris_settings
 
-    uom_code = _get_efris_uom(item.stock_uom, company)
+    uom_code = map_uom(item.stock_uom, company)
 
     def yn(val):
         return "101" if str(val or "").strip().lower() in ("yes", "1", "true") else "102"
@@ -294,7 +294,7 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
 
     # pieceMeasureUnit also goes through the same UOM mapper (max 3 chars enforced)
     piece_uom_raw = str(item.get("efris_piece_uom") or "")
-    piece_uom = _get_efris_uom(piece_uom_raw, company) if piece_uom_raw else ""
+    piece_uom = map_uom(piece_uom_raw, company) if piece_uom_raw else ""
 
     payload = {
         "operationType":      "101" if operation == "Add" else "102",
@@ -325,45 +325,3 @@ def _build_goods_payload(item, company: str, operation: str, goods_id: str = "")
         payload["goodsId"] = goods_id
 
     return payload
-
-
-# ─── UOM mapping ──────────────────────────────────────────────────────────────
-
-def _get_efris_uom(erpnext_uom: str, company: str) -> str:
-    """
-    Map ERPNext UOM → EFRIS URA UOM code (max 3 chars per EFRIS spec).
-    Falls back to 'PP' (Piece) if not mapped or if the mapped value is > 3 chars.
-    """
-    if not erpnext_uom:
-        return "PP"
-
-    ura_uom = get_mapped_ura_uom(erpnext_uom, company)
-    if ura_uom:
-        code = str(ura_uom).strip()
-        if len(code) <= 3:
-            return code
-        # Mapped value is too long — log and fall through to built-in map
-        frappe.logger("efris").warning(
-            f"EFRIS UOM Mapping '{erpnext_uom}' → '{code}' is {len(code)} chars "
-            f"(max 3). Check EFRIS UOM Mapping for company '{company}'."
-        )
-
-    return {
-        "Nos": "PP", "No": "PP", "Pcs": "PP", "Pieces": "PP", "Unit": "PP", "Units": "PP",
-        "Kg": "KGM", "Kgs": "KGM", "Kilogram": "KGM", "Kilograms": "KGM",
-        "g": "GRM", "Gram": "GRM", "Grams": "GRM",
-        "Ltr": "LTR", "Ltrs": "LTR", "Litre": "LTR", "Litres": "LTR", "Liter": "LTR",
-        "Ml": "MLT", "mL": "MLT", "Millilitre": "MLT",
-        "Mtr": "MTR", "Meter": "MTR", "Metre": "MTR",
-        "Cm": "CMT", "Centimeter": "CMT",
-        "Box": "BX", "Boxes": "BX",
-        "Dozen": "DZ", "Dz": "DZ",
-        "Bundle": "BE",
-        "Bag": "BG", "Bags": "BG",
-        "Bottle": "BO", "Bottles": "BO",
-        "Carton": "CT", "Cartons": "CT",
-        "Roll": "RL", "Rolls": "RL",
-        "Pair": "PR", "Pairs": "PR",
-        "Set": "SET",
-        "Tonne": "TNE", "Ton": "TNE", "Tons": "TNE",
-    }.get(erpnext_uom, "PP")

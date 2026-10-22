@@ -44,7 +44,7 @@ from efris_integration.api.session import (
 from efris_integration.utils.helpers import (
     efris_num,
     get_efris_settings,
-    get_mapped_ura_uom,
+    map_uom,
     log_efris,
     now_str,
     resolve_branch_for_doc,
@@ -315,7 +315,7 @@ def _build_t131_payload(doc, company: str, settings=None) -> dict:
             frappe.db.get_value("Item", row.item_code, "efris_reference_no") or ""
         ).strip()
 
-        uom_code   = _uom_code(row.uom or row.stock_uom or "", company)
+        uom_code   = map_uom(row.uom or row.stock_uom or "", company)
         # efris_num(): rounds + strips trailing zeros to avoid URA error [665]
         # "integer max 12 chars, decimal max 8 chars" — str(float) can produce
         # 13+ dp from ERPNext Decimal field floating-point residue.
@@ -347,41 +347,6 @@ def _build_t131_payload(doc, company: str, settings=None) -> dict:
         "goodsStockIn":     header,
         "goodsStockInItem": items,
     }
-
-
-# ─── UOM helper ───────────────────────────────────────────────────────────────
-
-def _uom_code(erpnext_uom: str, company: str) -> str:
-    """Map ERPNext UOM → EFRIS T115 rateUnit code (max 3 chars)."""
-    if not erpnext_uom:
-        return "PP"
-
-    db_code = get_mapped_ura_uom(erpnext_uom, company)
-    if db_code:
-        code = str(db_code).strip()
-        if len(code) <= 3:
-            return code
-
-    return {
-        "Nos": "PP",  "No": "PP",   "Pcs": "PP",  "Pieces": "PP",
-        "Unit": "PP", "Units": "PP",
-        "Kg": "KGM",  "Kgs": "KGM", "Kilogram": "KGM", "Kilograms": "KGM",
-        "g": "GRM",   "Gram": "GRM","Grams": "GRM",
-        "Ltr": "LTR", "Ltrs": "LTR","Litre": "LTR","Litres": "LTR","Liter": "LTR",
-        "Ml": "MLT",  "mL": "MLT",  "Millilitre": "MLT",
-        "Mtr": "MTR", "Meter": "MTR","Metre": "MTR",
-        "Cm": "CMT",  "Centimeter": "CMT",
-        "Box": "BX",  "Boxes": "BX",
-        "Dozen": "DZ","Dz": "DZ",
-        "Bundle": "BE",
-        "Bag": "BG",  "Bags": "BG",
-        "Bottle": "BO","Bottles": "BO",
-        "Carton": "CT","Cartons": "CT",
-        "Roll": "RL", "Rolls": "RL",
-        "Pair": "PR", "Pairs": "PR",
-        "Set": "SET",
-        "Tonne": "TNE","Ton": "TNE","Tons": "TNE",
-    }.get(erpnext_uom, "PP")
 
 
 # ─── Response parser ──────────────────────────────────────────────────────────

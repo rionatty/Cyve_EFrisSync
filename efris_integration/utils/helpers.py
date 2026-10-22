@@ -101,12 +101,50 @@ def get_mapped_ura_uom(erpnext_uom: str, company: str) -> str:
     return ""
 
 
+# Used when a UOM has no (valid) row in the company's EFRIS UOM Mapping.
+DEFAULT_URA_UOMS = {
+    "Nos": "PP", "No": "PP", "Pcs": "PP", "Pieces": "PP", "Unit": "PP", "Units": "PP",
+    "Kg": "KGM", "Kgs": "KGM", "Kilogram": "KGM", "Kilograms": "KGM",
+    "g": "GRM", "Gram": "GRM", "Grams": "GRM",
+    "Ltr": "LTR", "Ltrs": "LTR", "Litre": "LTR", "Litres": "LTR", "Liter": "LTR",
+    "Ml": "MLT", "mL": "MLT", "Millilitre": "MLT",
+    "Mtr": "MTR", "Meter": "MTR", "Metre": "MTR",
+    "Cm": "CMT", "Centimeter": "CMT",
+    "Box": "BX", "Boxes": "BX",
+    "Dozen": "DZ", "Dz": "DZ",
+    "Bundle": "BE",
+    "Bag": "BG", "Bags": "BG",
+    "Bottle": "BO", "Bottles": "BO",
+    "Carton": "CT", "Cartons": "CT",
+    "Roll": "RL", "Rolls": "RL",
+    "Pair": "PR", "Pairs": "PR",
+    "Set": "SET",
+    "Tonne": "TNE", "Ton": "TNE", "Tons": "TNE",
+}
+
+
 def map_uom(erpnext_uom: str, company: str) -> str:
     """
-    Map an ERPNext UOM to its URA UOM code for the given company.
-    Falls back to the raw UOM string if no mapping found.
+    Map an ERPNext UOM to its URA UOM code (max 3 chars) for the given company.
+
+    Used for item registration, invoices and stock documents alike, so a line's
+    unitOfMeasure always matches the unit the item was registered with.
+    Order: company's EFRIS UOM Mapping → DEFAULT_URA_UOMS → "PP" (Piece).
+    Never returns the raw ERPNext name — URA rejects it (error 1208).
     """
-    return get_mapped_ura_uom(erpnext_uom, company) or erpnext_uom
+    if not erpnext_uom:
+        return "PP"
+
+    ura_uom = str(get_mapped_ura_uom(erpnext_uom, company) or "").strip()
+    if ura_uom:
+        if len(ura_uom) <= 3:
+            return ura_uom
+        frappe.logger("efris").warning(
+            f"EFRIS UOM Mapping '{erpnext_uom}' → '{ura_uom}' is {len(ura_uom)} chars "
+            f"(max 3). Check EFRIS UOM Mapping for company '{company}'."
+        )
+
+    return DEFAULT_URA_UOMS.get(erpnext_uom, "PP")
 
 
 # ── Tax code mapping (per-company) ────────────────────────────────────────────
